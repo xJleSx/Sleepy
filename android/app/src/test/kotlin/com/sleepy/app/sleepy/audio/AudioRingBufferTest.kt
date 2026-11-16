@@ -171,6 +171,98 @@ class AudioRingBufferTest {
         assertThrows(IllegalArgumentException::class.java) { buffer.copyLast(-1) }
     }
 
+    @Test
+    fun totalSamplesWrittenCountsEvictedSamples() {
+        val buffer = createBuffer(5, 1, 2, 3, 4, 5, 6, 7)
+
+        assertEquals(7L, buffer.totalSamplesWritten)
+        assertEquals(2L, buffer.oldestAvailableSample)
+        assertEquals(5, buffer.availableSamples())
+    }
+
+    @Test
+    fun copyAbsoluteReturnsRangeInChronologicalOrder() {
+        val buffer = createBuffer(5, 1, 2, 3, 4, 5, 6, 7)
+
+        assertArrayEquals(intArrayOf(3, 4, 5), buffer.copyAbsolute(2, 3).asInts())
+        assertArrayEquals(intArrayOf(6, 7), buffer.copyAbsolute(5, 10).asInts())
+        assertArrayEquals(intArrayOf(7), buffer.copyAbsolute(6, 1).asInts())
+    }
+
+    @Test
+    fun copyAbsoluteClampsToAvailableHistory() {
+        val buffer = createBuffer(5, 1, 2, 3, 4, 5, 6, 7)
+
+        assertArrayEquals(intArrayOf(3, 4), buffer.copyAbsolute(1, 3).asInts())
+        assertTrue(buffer.copyAbsolute(7, 1).isEmpty())
+        assertTrue(buffer.copyAbsolute(100, 5).isEmpty())
+    }
+
+    @Test
+    fun copyAbsoluteHandlesChunkBiggerThanCapacity() {
+        val buffer = createBuffer(4, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+
+        assertEquals(10L, buffer.totalSamplesWritten)
+        assertArrayEquals(intArrayOf(7, 8, 9, 10), buffer.copyAbsolute(6, 4).asInts())
+    }
+
+    @Test
+    fun copyAbsoluteToRespectsDestinationOffset() {
+        val buffer = createBuffer(5, 1, 2, 3, 4, 5, 6, 7)
+        val destination = ShortArray(5) { -1 }
+
+        val copied = buffer.copyAbsoluteTo(3, destination, destinationOffset = 1, count = 2)
+
+        assertEquals(2, copied)
+        assertArrayEquals(
+            shortArrayOf(-1, 4, 5, -1, -1),
+            destination,
+        )
+    }
+
+    @Test
+    fun copyAbsoluteToReturnsOnlyReallyCopiedSamples() {
+        val buffer = createBuffer(5, 1, 2, 3, 4, 5, 6, 7)
+        val destination = ShortArray(4)
+
+        // Индексы 0..1 уже вытеснены: копируются только 3 и 4.
+        assertEquals(2, buffer.copyAbsoluteTo(0, destination, 0, 4))
+        assertArrayEquals(shortArrayOf(3, 4, 0, 0), destination)
+
+        // За концом записанных данных копируется только доступное.
+        assertEquals(2, buffer.copyAbsoluteTo(5, destination, 0, 4))
+
+        // Начиная с последнего записанного сэмпла копировать нечего.
+        assertEquals(0, buffer.copyAbsoluteTo(7, destination, 0, 2))
+        assertEquals(7L, buffer.totalSamplesWritten)
+        assertEquals(2L, buffer.oldestAvailableSample)
+    }
+
+    @Test
+    fun copyAbsoluteRejectsInvalidArguments() {
+        val buffer = createBuffer(5, 1, 2, 3)
+        val destination = ShortArray(4)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            buffer.copyAbsolute(-1, 1)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            buffer.copyAbsolute(0, -1)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            buffer.copyAbsoluteTo(-1, destination)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            buffer.copyAbsoluteTo(0, destination, destinationOffset = -1)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            buffer.copyAbsoluteTo(0, destination, count = -1)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            buffer.copyAbsoluteTo(0, destination, destinationOffset = 2, count = 3)
+        }
+    }
+
     private fun createBuffer(capacity: Int, vararg values: Int): AudioRingBuffer {
         val buffer = AudioRingBuffer(capacity)
         buffer.write(values.asShorts())

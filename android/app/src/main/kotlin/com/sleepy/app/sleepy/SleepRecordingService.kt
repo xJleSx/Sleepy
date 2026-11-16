@@ -9,20 +9,27 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import com.sleepy.app.sleepy.audio.AudioCaptureSession
+import com.sleepy.app.sleepy.audio.AudioRecordSource
+import com.sleepy.app.sleepy.audio.RecordingConfig
+import com.sleepy.app.sleepy.audio.RecordingSessionController
+import com.sleepy.app.sleepy.audio.RecordingStatusStore
 import java.io.File
-import java.io.RandomAccessFile
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
+/**
+ * Foreground-служба мониторинга сна.
+ *
+ * Служба отвечает только за Android-жизненный цикл: foreground-уведомление,
+ * WakeLock и передачу команд в [AudioCaptureSession]. Сама она не читает
+ * микрофон и не пишет файлы — этим занимается сессия, которая сохраняет
+ * отдельные WAV-фрагменты на обнаруженные звуковые события вместо одной
+ * непрерывной ночной записи.
+ */
 class SleepRecordingService : Service() {
 
     companion object {
@@ -31,296 +38,127 @@ class SleepRecordingService : Service() {
 
         private const val CHANNEL_ID = "sleepy_recording_channel"
         private const val NOTIFICATION_ID = 1001
-
-        private const val PREFS_NAME = "sleepy_recording"
-
-        private const val SAMPLE_RATE = 16000
-        private const val CHANNELS = 1
-        private const val BITS_PER_SAMPLE = 16
+        const val RECORDINGS_DIRECTORY = "recordings"
+        private const val STOP_WATCHDOG_MS = 15_000L
     }
 
-    @Volatile
-    private var isRecording = false
+    private val config = RecordingConfig.DEFAULT
 
-    private var audioRecord: AudioRecord? = null
-    private var recordingThread: Thread? = null
-    private var outputFile: File? = null
-    private var outputStream: RandomAccessFile? = null
+    private lateinit var statusStore: RecordingStatusStore
+
+    private lateinit var controller: RecordingSessionController<AudioCaptureSession>
+
     private var wakeLock: PowerManager.WakeLock? = null
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Страховка от зависшего потока захвата: служба не может оставаться
+     * foreground вечно, если остановка не завершилась. Пока поток жив,
+     * контроллер не освобождает ресурсы и не разрешает новый запуск.
+     */
+    private val stopWatchdog = Runnable { handleWatchdog() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        statusStore = RecordingStatusStore(this)
+
+        controller = RecordingSessionController(
+            status = statusStore,
+            createSession = { onFinished -> createSession(onFinished) },
+            startForeground = { startForegroundCompat() },
+            stopForeground = { stopForegroundCompat() },
+            acquireWakeLock = { acquireWakeLock() },
+            releaseWakeLock = { releaseWakeLock() },
+            requestStopService = { stopSelf() },
+            cancelWatchdog = { mainHandler.removeCallbacks(stopWatchdog) },
+        )
+
         createNotificationChannel()
     }
 
     override fun onStartCommand(
         intent: Intent?,
         flags: Int,
-        startId: Int
+        startId: Int,
     ): Int {
-
         when (intent?.action) {
-            ACTION_START -> startRecording()
-            ACTION_STOP -> stopRecording()
+            ACTION_START -> startMonitoring()
+            ACTION_STOP -> stopMonitoring()
         }
 
         return START_NOT_STICKY
     }
 
-    private fun startRecording() {
-        if (isRecording) return
+    override fun onDestroy() {
+        mainHandler.removeCallbacks(stopWatchdog)
 
-        if (
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            saveError("Нет разрешения на микрофон")
-            stopSelf()
-            return
+        if (::controller.isInitialized) {
+            controller.onDestroy()
         }
 
-        try {
-            startForegroundCompat()
+        releaseWakeLock()
+        super.onDestroy()
+    }
 
-            val minimumBufferSize = AudioRecord.getMinBufferSize(
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            )
-
-            if (minimumBufferSize <= 0) {
-                throw IllegalStateException(
-                    "Не удалось определить размер аудиобуфера"
-                )
-            }
-
-            val bufferSize = maxOf(
-                minimumBufferSize,
-                SAMPLE_RATE * 2
-            )
-
-            val recorder = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
-            )
-
-            if (recorder.state != AudioRecord.STATE_INITIALIZED) {
-                recorder.release()
-                throw IllegalStateException(
-                    "Не удалось инициализировать микрофон"
-                )
-            }
-
-            val directory = File(filesDir, "recordings")
-
-            if (!directory.exists() && !directory.mkdirs()) {
-                recorder.release()
-                throw IllegalStateException(
-                    "Не удалось создать папку записей"
-                )
-            }
-
-            val date = SimpleDateFormat(
-                "yyyyMMdd_HHmmss",
-                Locale.US
-            ).format(Date())
-
-            val file = File(
-                directory,
-                "sleep_$date.wav"
-            )
-
-            val stream = RandomAccessFile(file, "rw")
-            stream.setLength(0)
-
-            writeWavHeader(stream, 0)
-
-            recorder.startRecording()
-
+    private fun startMonitoring() {
+        // Если сессия уже идёт, повторный START не должен требовать
+        // разрешение заново: контроллер сам проигнорирует такой вызов.
+        if (!controller.isRunning) {
             if (
-                recorder.recordingState !=
-                AudioRecord.RECORDSTATE_RECORDING
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED
             ) {
-                recorder.release()
-                stream.close()
-
-                throw IllegalStateException(
-                    "Микрофон не начал запись"
-                )
-            }
-
-            audioRecord = recorder
-            outputStream = stream
-            outputFile = file
-
-            isRecording = true
-
-            acquireWakeLock()
-
-            val preferences = getSharedPreferences(
-                PREFS_NAME,
-                MODE_PRIVATE
-            )
-
-            preferences.edit()
-                .putBoolean("is_recording", true)
-                .putString("file_path", file.absolutePath)
-                .putLong("started_at", System.currentTimeMillis())
-                .putString("error", "")
-                .apply()
-
-            recordingThread = Thread {
-                captureAudio(recorder, stream)
-            }.apply {
-                name = "SleepyAudioRecording"
-                start()
-            }
-
-        } catch (exception: Exception) {
-            isRecording = false
-            saveError(
-                exception.message ?: "Неизвестная ошибка записи"
-            )
-
-            releaseResources()
-
-            stopForegroundCompat()
-            stopSelf()
-        }
-    }
-
-    private fun captureAudio(
-        recorder: AudioRecord,
-        stream: RandomAccessFile
-    ) {
-        val buffer = ByteArray(8192)
-        var recordingError = ""
-
-        try {
-            while (isRecording) {
-                val bytesRead = recorder.read(
-                    buffer,
-                    0,
-                    buffer.size
-                )
-
-                if (bytesRead > 0) {
-                    stream.write(buffer, 0, bytesRead)
-                } else if (bytesRead < 0 && isRecording) {
-                    recordingError = "Ошибка чтения микрофона: $bytesRead"
-                    break
-                }
-            }
-        } catch (exception: Exception) {
-            recordingError =
-                exception.message ?: "Ошибка во время записи"
-        } finally {
-            isRecording = false
-
-            try {
-                val audioDataLength = (stream.length() - 44)
-                    .coerceAtLeast(0)
-
-                writeWavHeader(stream, audioDataLength)
-                stream.close()
-            } catch (_: Exception) {
-            }
-
-            try {
-                recorder.release()
-            } catch (_: Exception) {
-            }
-
-            audioRecord = null
-            outputStream = null
-
-            releaseWakeLock()
-
-            val preferences = getSharedPreferences(
-                PREFS_NAME,
-                MODE_PRIVATE
-            )
-
-            preferences.edit()
-                .putBoolean("is_recording", false)
-                .putString("error", recordingError)
-                .apply()
-
-            Handler(Looper.getMainLooper()).post {
-                stopForegroundCompat()
+                statusStore.saveFatalError("Нет разрешения на микрофон")
                 stopSelf()
+                return
             }
         }
+
+        controller.start()
     }
 
-    private fun stopRecording() {
-        if (!isRecording) {
-            stopForegroundCompat()
-            stopSelf()
-            return
-        }
-
-        isRecording = false
-
-        try {
-            audioRecord?.stop()
-        } catch (_: Exception) {
+    private fun stopMonitoring() {
+        if (controller.stop()) {
+            mainHandler.removeCallbacks(stopWatchdog)
+            mainHandler.postDelayed(stopWatchdog, STOP_WATCHDOG_MS)
         }
     }
 
-    private fun writeWavHeader(
-        file: RandomAccessFile,
-        audioDataLength: Long
-    ) {
-        val byteRate =
-            SAMPLE_RATE * CHANNELS * BITS_PER_SAMPLE / 8
-
-        val blockAlign =
-            CHANNELS * BITS_PER_SAMPLE / 8
-
-        val totalDataLength = audioDataLength + 36
-
-        file.seek(0)
-
-        file.writeBytes("RIFF")
-        writeIntLE(file, totalDataLength.toInt())
-
-        file.writeBytes("WAVE")
-
-        file.writeBytes("fmt ")
-        writeIntLE(file, 16)
-        writeShortLE(file, 1)
-        writeShortLE(file, CHANNELS)
-        writeIntLE(file, SAMPLE_RATE)
-        writeIntLE(file, byteRate)
-        writeShortLE(file, blockAlign)
-        writeShortLE(file, BITS_PER_SAMPLE)
-
-        file.writeBytes("data")
-        writeIntLE(file, audioDataLength.toInt())
+    private fun handleWatchdog() {
+        if (controller.onWatchdog()) {
+            mainHandler.postDelayed(stopWatchdog, STOP_WATCHDOG_MS)
+        }
     }
 
-    private fun writeIntLE(
-        file: RandomAccessFile,
-        value: Int
-    ) {
-        file.write(value and 0xFF)
-        file.write((value shr 8) and 0xFF)
-        file.write((value shr 16) and 0xFF)
-        file.write((value shr 24) and 0xFF)
-    }
+    private fun createSession(
+        onFinished: (AudioCaptureSession) -> Unit,
+    ): AudioCaptureSession? {
+        val directory = File(filesDir, RECORDINGS_DIRECTORY)
 
-    private fun writeShortLE(
-        file: RandomAccessFile,
-        value: Int
-    ) {
-        file.write(value and 0xFF)
-        file.write((value shr 8) and 0xFF)
+        if (!directory.exists() && !directory.mkdirs()) {
+            statusStore.saveFatalError("Не удалось создать папку записей")
+            return null
+        }
+
+        return AudioCaptureSession(
+            config = config,
+            directory = directory,
+            status = statusStore,
+            sourceFactory = {
+                AudioRecordSource(
+                    sampleRate = config.sampleRate,
+                    preferredBufferBytes = config.bytesPerSecond,
+                )
+            },
+            onSessionFinished = { finished ->
+                // Колбэк приходит из потока захвата: в UI и уведомления
+                // можно ходить только через главный поток.
+                mainHandler.post { onFinished(finished) }
+            },
+        )
     }
 
     private fun acquireWakeLock() {
@@ -328,7 +166,7 @@ class SleepRecordingService : Service() {
 
         wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
-            "Sleepy::RecordingWakeLock"
+            "Sleepy::RecordingWakeLock",
         ).apply {
             acquire()
         }
@@ -340,6 +178,7 @@ class SleepRecordingService : Service() {
                 wakeLock?.release()
             }
         } catch (_: Exception) {
+            // блокировка уже снята системой
         }
 
         wakeLock = null
@@ -350,13 +189,13 @@ class SleepRecordingService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Мониторинг сна",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_LOW,
             ).apply {
                 description = "Уведомление о записи звука во время сна"
             }
 
             val manager = getSystemService(
-                NotificationManager::class.java
+                NotificationManager::class.java,
             )
 
             manager.createNotificationChannel(channel)
@@ -366,7 +205,7 @@ class SleepRecordingService : Service() {
     private fun buildNotification(): Notification {
         val stopIntent = Intent(
             this,
-            SleepRecordingService::class.java
+            SleepRecordingService::class.java,
         ).apply {
             action = ACTION_STOP
         }
@@ -376,7 +215,7 @@ class SleepRecordingService : Service() {
             1002,
             stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or
-                PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_IMMUTABLE,
         )
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -394,27 +233,27 @@ class SleepRecordingService : Service() {
             .addAction(
                 android.R.drawable.ic_media_pause,
                 "Остановить",
-                stopPendingIntent
+                stopPendingIntent,
             )
             .build()
     }
 
     private fun startForegroundCompat() {
-    val notification = buildNotification()
+        val notification = buildNotification()
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        startForeground(
-            NOTIFICATION_ID,
-            notification,
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        )
-    } else {
-        startForeground(
-            NOTIFICATION_ID,
-            notification
-        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+            )
+        } else {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+            )
+        }
     }
-}
 
     private fun stopForegroundCompat() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -423,32 +262,5 @@ class SleepRecordingService : Service() {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
-    }
-
-    private fun saveError(message: String) {
-        getSharedPreferences(
-            PREFS_NAME,
-            MODE_PRIVATE
-        ).edit()
-            .putBoolean("is_recording", false)
-            .putString("error", message)
-            .apply()
-    }
-
-    private fun releaseResources() {
-        try {
-            audioRecord?.release()
-        } catch (_: Exception) {
-        }
-
-        try {
-            outputStream?.close()
-        } catch (_: Exception) {
-        }
-
-        audioRecord = null
-        outputStream = null
-
-        releaseWakeLock()
     }
 }

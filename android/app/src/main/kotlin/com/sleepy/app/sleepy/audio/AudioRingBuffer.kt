@@ -28,6 +28,18 @@ class AudioRingBuffer(val capacitySamples: Int) {
     /** Сколько сэмплов реально записано (не больше вместимости). */
     fun availableSamples(): Int = storedSamples
 
+    /**
+     * Сколько сэмплов всего было записано с момента создания буфера,
+     * включая уже вытесненные. Служит абсолютной шкалой времени:
+     * сэмпл с индексом [totalSamplesWritten] появится при следующей записи.
+     */
+    var totalSamplesWritten: Long = 0L
+        private set
+
+    /** Абсолютный индекс самого старого сэмпла, который ещё хранится. */
+    val oldestAvailableSample: Long
+        get() = totalSamplesWritten - storedSamples
+
     val isFull: Boolean
         get() = storedSamples == capacitySamples
 
@@ -62,6 +74,7 @@ class AudioRingBuffer(val capacitySamples: Int) {
             System.arraycopy(source, tailStart, samples, 0, capacitySamples)
             writeIndex = 0
             storedSamples = capacitySamples
+            totalSamplesWritten += length
             return
         }
 
@@ -79,6 +92,7 @@ class AudioRingBuffer(val capacitySamples: Int) {
         }
 
         storedSamples = minOf(capacitySamples, storedSamples + length)
+        totalSamplesWritten += length
     }
 
     /**
@@ -110,5 +124,71 @@ class AudioRingBuffer(val capacitySamples: Int) {
         }
 
         return result
+    }
+
+    /**
+     * Копирует до [count] сэмплов, начиная с абсолютного индекса
+     * [startSample], в [destination] начиная с [destinationOffset].
+     *
+     * Возвращает число реально скопированных сэмплов. Если запрошенный
+     * диапазон частично вытеснен или ещё не записан, копируется только
+     * доступная часть — без дополнения тишиной: вызывающая сторона сама
+     * решает, что делать с более коротким результатом.
+     *
+     * Метод не создаёт промежуточных массивов, поэтому подходит для
+     * потоковой записи в файл на горячем пути.
+     */
+    fun copyAbsoluteTo(
+        startSample: Long,
+        destination: ShortArray,
+        destinationOffset: Int = 0,
+        count: Int = destination.size - destinationOffset,
+    ): Int {
+        require(startSample >= 0L) { "startSample не может быть отрицательным" }
+        require(destinationOffset >= 0) { "destinationOffset не может быть отрицательным" }
+        require(count >= 0) { "count не может быть отрицательным" }
+        require(destinationOffset <= destination.size - count) {
+            "destinationOffset + count выходит за границы массива назначения"
+        }
+
+        if (count == 0 || storedSamples == 0) return 0
+
+        val from = maxOf(startSample, oldestAvailableSample)
+        val toExclusive = minOf(startSample + count, totalSamplesWritten)
+        val actual = (toExclusive - from).toInt()
+        if (actual <= 0) return 0
+
+        var physical = physicalIndex(from)
+        val firstPart = minOf(actual, capacitySamples - physical)
+        System.arraycopy(samples, physical, destination, destinationOffset, firstPart)
+
+        val secondPart = actual - firstPart
+        if (secondPart > 0) {
+            System.arraycopy(samples, 0, destination, destinationOffset + firstPart, secondPart)
+        }
+
+        return actual
+    }
+
+    /**
+     * Возвращает новый массив с копией исторического диапазона.
+     *
+     * Удобно для редких операций (например, pre-roll при старте события).
+     * На каждый чанк использовать не следует — см. [copyAbsoluteTo].
+     */
+    fun copyAbsolute(startSample: Long, count: Int): ShortArray {
+        require(count >= 0) { "count не может быть отрицательным" }
+        val result = ShortArray(count)
+        val copied = copyAbsoluteTo(startSample, result, 0, count)
+        return if (copied == count) result else result.copyOf(copied)
+    }
+
+    private fun physicalIndex(absoluteIndex: Long): Int {
+        val distanceFromEnd = totalSamplesWritten - absoluteIndex
+        var physical = writeIndex - (distanceFromEnd % capacitySamples).toInt()
+        if (physical < 0) {
+            physical += capacitySamples
+        }
+        return physical
     }
 }

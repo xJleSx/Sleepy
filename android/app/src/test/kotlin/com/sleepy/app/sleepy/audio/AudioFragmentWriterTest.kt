@@ -1,0 +1,313 @@
+package com.sleepy.app.sleepy.audio
+
+import java.io.File
+import java.io.IOException
+import java.io.RandomAccessFile
+import java.util.concurrent.CopyOnWriteArrayList
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+class AudioFragmentWriterTest {
+
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    private val config = RecordingConfig.DEFAULT
+
+    @Test
+    fun savesFragmentAndReportsItOnce() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("fragments")
+        val writer = newWriter(directory, listener)
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        assertTrue(writer.append(ShortArray(100) { 7 }, 0, 100))
+        writer.finish(2_000L, 100L, truncated = false, contentEndSample = 100L)
+        assertTrue(writer.stop(5_000))
+
+        assertEquals(1, listener.saved.size)
+        assertEquals(100L, listener.saved.single().samples)
+        assertTrue(listener.saved.single().file.isFile)
+        assertTrue(listener.failed.isEmpty())
+        assertTrue(listener.warnings.isEmpty())
+        assertEquals(1L, writer.openCountTotal)
+        assertEquals(1L, writer.savedCountTotal)
+        assertEquals(0L, writer.failedCountTotal)
+        assertEquals("", writer.lastErrorText)
+        assertEquals(
+            listener.saved.single().file.absolutePath,
+            writer.lastSavedPathText,
+        )
+    }
+
+    @Test
+    fun openFailureIsReportedAndFragmentIsNotSaved() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("fragments")
+        val writer = newWriter(
+            directory = directory,
+            listener = listener,
+            openFile = { throw IOException("Смоделированный отказ создания") },
+        )
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        assertTrue(writer.append(ShortArray(100) { 1 }, 0, 100))
+        writer.finish(2_000L, 100L, truncated = false, contentEndSample = 100L)
+        assertTrue(writer.stop(5_000))
+
+        assertTrue(listener.saved.isEmpty())
+        assertEquals(1, listener.failed.size)
+        assertTrue(listener.failed.single().contains("создать"))
+        assertTrue(wavFiles(directory).isEmpty())
+        assertEquals(1L, writer.openCountTotal)
+        assertEquals(0L, writer.savedCountTotal)
+        assertEquals(1L, writer.failedCountTotal)
+        assertTrue(writer.lastErrorText.contains("создать"))
+        assertEquals("", writer.lastSavedPathText)
+    }
+
+    @Test
+    fun writeFailureIsReportedOnceAndFileIsDeleted() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("fragments")
+        val writer = newWriter(
+            directory = directory,
+            listener = listener,
+            openFile = { DataFailRandomAccessFile(it) },
+        )
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        writer.append(ShortArray(100) { 1 }, 0, 100)
+        writer.append(ShortArray(100) { 2 }, 0, 100)
+        writer.finish(2_000L, 200L, truncated = false, contentEndSample = 200L)
+        assertTrue(writer.stop(5_000))
+
+        assertTrue(listener.saved.isEmpty())
+        assertEquals(1, listener.failed.size)
+        assertTrue(listener.failed.single().contains("записи"))
+        assertTrue(wavFiles(directory).isEmpty())
+        assertEquals(1L, writer.failedCountTotal)
+        assertTrue(writer.lastErrorText.contains("записи"))
+    }
+
+    @Test
+    fun headerUpdateFailureIsReportedAndFragmentIsDeleted() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("fragments")
+        val writer = newWriter(
+            directory = directory,
+            listener = listener,
+            openFile = { HeaderFailRandomAccessFile(it) },
+        )
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        writer.append(ShortArray(100) { 1 }, 0, 100)
+        writer.finish(2_000L, 100L, truncated = false, contentEndSample = 100L)
+        assertTrue(writer.stop(5_000))
+
+        assertTrue(listener.saved.isEmpty())
+        assertEquals(1, listener.failed.size)
+        assertTrue(listener.failed.single().contains("заголовка"))
+        assertTrue(wavFiles(directory).isEmpty())
+    }
+
+    @Test
+    fun securityFailureKeepsWriterAliveUntilStop() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("security")
+        val writer = newWriter(
+            directory = directory,
+            listener = listener,
+            openFile = { SecurityFailRandomAccessFile(it) },
+        )
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        writer.append(ShortArray(100) { 1 }, 0, 100)
+
+        assertTrue(writer.stop(5_000))
+        assertTrue(listener.saved.isEmpty())
+        assertEquals(1, listener.failed.size)
+        assertTrue(listener.failed.single().contains("доступа"))
+        assertTrue(wavFiles(directory).isEmpty())
+    }
+
+    @Test
+    fun trimFailureIsReportedAndFragmentIsDeleted() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("fragments")
+        val writer = newWriter(
+            directory = directory,
+            listener = listener,
+            openFile = { TrimFailRandomAccessFile(it) },
+        )
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        writer.append(ShortArray(100) { 1 }, 0, 100)
+        writer.finish(2_000L, 100L, truncated = false, contentEndSample = 50L)
+        assertTrue(writer.stop(5_000))
+
+        assertTrue(listener.saved.isEmpty())
+        assertEquals(1, listener.failed.size)
+        assertTrue(listener.failed.single().contains("обрезке"))
+        assertTrue(wavFiles(directory).isEmpty())
+    }
+
+    @Test
+    fun closeFailureIsReportedAndFragmentIsNotCountedAsSaved() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("fragments")
+        val writer = newWriter(
+            directory = directory,
+            listener = listener,
+            openFile = { CloseFailRandomAccessFile(it) },
+        )
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        writer.append(ShortArray(100) { 1 }, 0, 100)
+        writer.finish(2_000L, 100L, truncated = false, contentEndSample = 100L)
+        assertTrue(writer.stop(5_000))
+
+        assertTrue(listener.saved.isEmpty())
+        assertEquals(1, listener.failed.size)
+        assertTrue(listener.failed.single().contains("закрытии"))
+        assertTrue(wavFiles(directory).isEmpty())
+    }
+
+    @Test
+    fun abortDeletesFileWithoutSuccessOrFailure() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("fragments")
+        val writer = newWriter(directory, listener)
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        writer.append(ShortArray(100) { 1 }, 0, 100)
+        writer.abort()
+        assertTrue(writer.stop(5_000))
+
+        assertTrue(listener.saved.isEmpty())
+        assertTrue(listener.failed.isEmpty())
+        assertTrue(wavFiles(directory).isEmpty())
+    }
+
+    @Test
+    fun nextFragmentIsSavedAfterPreviousFailure() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("fragments")
+        val writer = newWriter(
+            directory = directory,
+            listener = listener,
+            openFile = { file ->
+                if (file.name.endsWith("_001.wav")) {
+                    DataFailRandomAccessFile(file)
+                } else {
+                    RandomAccessFile(file, "rw")
+                }
+            },
+        )
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        writer.append(ShortArray(100) { 1 }, 0, 100)
+        writer.finish(2_000L, 100L, truncated = false, contentEndSample = 100L)
+
+        writer.open(2L, 3_000L, 100L, 100L)
+        writer.append(ShortArray(100) { 2 }, 0, 100)
+        writer.finish(4_000L, 200L, truncated = false, contentEndSample = 200L)
+
+        assertTrue(writer.stop(5_000))
+
+        assertEquals(1, listener.failed.size)
+        assertEquals(1, listener.saved.size)
+        assertTrue(listener.saved.single().file.name.endsWith("_002.wav"))
+        assertEquals(1, wavFiles(directory).size)
+        assertEquals(2L, writer.openCountTotal)
+        assertEquals(1L, writer.savedCountTotal)
+        assertEquals(1L, writer.failedCountTotal)
+        assertTrue(writer.lastSavedPathText.endsWith("_002.wav"))
+    }
+
+    private fun newWriter(
+        directory: File,
+        listener: AudioFragmentWriter.Listener,
+        openFile: (File) -> RandomAccessFile = { RandomAccessFile(it, "rw") },
+        queueBlocks: Int = 256,
+    ): AudioFragmentWriter = AudioFragmentWriter(
+        config = config,
+        directory = directory,
+        listener = listener,
+        openFile = openFile,
+        freeSpaceProvider = { Long.MAX_VALUE },
+        queueBlocks = queueBlocks,
+    )
+
+    private fun wavFiles(directory: File): List<File> =
+        directory.listFiles { file -> file.extension == "wav" }?.toList().orEmpty()
+
+    private class RecordingListener : AudioFragmentWriter.Listener {
+
+        val saved = CopyOnWriteArrayList<SavedAudioFragment>()
+        val failed = CopyOnWriteArrayList<String>()
+        val warnings = CopyOnWriteArrayList<String>()
+
+        override fun onFragmentSaved(fragment: SavedAudioFragment) {
+            saved += fragment
+        }
+
+        override fun onFragmentFailed(generation: Long, message: String) {
+            failed += message
+        }
+
+        override fun onWarning(message: String) {
+            warnings += message
+        }
+    }
+
+    /** Пропускает запись заголовка, но ломает запись аудиоданных. */
+    private class DataFailRandomAccessFile(file: File) : RandomAccessFile(file, "rw") {
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            if (filePointer >= 44L && len > 4) {
+                throw IOException("Смоделированная ошибка записи данных")
+            }
+            super.write(b, off, len)
+        }
+    }
+
+    /** Ломает правку заголовка после появления аудиоданных. */
+    private class HeaderFailRandomAccessFile(file: File) : RandomAccessFile(file, "rw") {
+        override fun seek(pos: Long) {
+            if (pos == 4L && length() > 44L) {
+                throw IOException("Смоделированная ошибка обновления заголовка")
+            }
+            super.seek(pos)
+        }
+    }
+
+    /** Имитирует отзыв доступа к файлу во время записи аудиоданных. */
+    private class SecurityFailRandomAccessFile(file: File) : RandomAccessFile(file, "rw") {
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            if (filePointer >= 44L) {
+                throw SecurityException("Смоделированный отказ доступа")
+            }
+            super.write(b, off, len)
+        }
+    }
+
+    private class TrimFailRandomAccessFile(file: File) : RandomAccessFile(file, "rw") {
+        override fun setLength(newLength: Long) {
+            if (newLength < length()) {
+                throw IOException("Смоделированная ошибка обрезки")
+            }
+            super.setLength(newLength)
+        }
+    }
+
+    private class CloseFailRandomAccessFile(file: File) : RandomAccessFile(file, "rw") {
+        override fun close() {
+            super.close()
+            throw IOException("Смоделированная ошибка закрытия")
+        }
+    }
+}

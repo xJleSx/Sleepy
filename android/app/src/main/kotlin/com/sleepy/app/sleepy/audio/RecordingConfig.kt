@@ -21,6 +21,7 @@ data class RecordingConfig(
     val hysteresisDb: Double = 6.0,
     val absoluteFloorDbfs: Double = -45.0,
     val noiseFloorAlpha: Double = 0.02,
+    val detectorWarmupMs: Int = 1_000,
     val minFreeSpaceMb: Long = 200,
     val fullRecordingEnabled: Boolean = false,
 ) {
@@ -43,6 +44,7 @@ data class RecordingConfig(
             "Порог срабатывания должен быть выше гистерезиса"
         }
         require(noiseFloorAlpha in 0.0..1.0) { "noiseFloorAlpha должен быть в диапазоне 0..1" }
+        require(detectorWarmupMs >= 0) { "detectorWarmupMs не может быть отрицательным" }
         require(minFreeSpaceMb >= 0) { "minFreeSpaceMb не может быть отрицательным" }
     }
 
@@ -69,6 +71,8 @@ data class RecordingConfig(
     val maxEventSamples: Int = sampleRate * maxEventSeconds
 
     val minEventChunks: Int = (minEventMs + chunkMs - 1) / chunkMs
+
+    val warmupSamples: Int = sampleRate * detectorWarmupMs / 1_000
 
     val postRollChunks: Int = (postRollMs + chunkMs - 1) / chunkMs
 
