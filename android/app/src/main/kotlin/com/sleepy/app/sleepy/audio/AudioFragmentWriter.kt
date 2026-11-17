@@ -42,6 +42,7 @@ internal class AudioFragmentWriter(
     private val openFile: (File) -> RandomAccessFile,
     private val freeSpaceProvider: (File) -> Long,
     queueBlocks: Int,
+    private val syncFile: (RandomAccessFile) -> Unit = { it.fd.sync() },
 ) {
 
     interface Listener {
@@ -121,6 +122,9 @@ internal class AudioFragmentWriter(
     @Volatile
     private var lastSavedPath = ""
 
+    @Volatile
+    private var stopRequested = false
+
     init {
         require(queueBlocks > 0) { "Количество блоков записи должно быть больше нуля" }
         repeat(queueBlocks) { freeBlocks.add(PcmBlock(ShortArray(BLOCK_SAMPLES))) }
@@ -166,6 +170,8 @@ internal class AudioFragmentWriter(
         startSample: Long,
         contentStartSample: Long,
     ) {
+        if (stopRequested) return
+
         discardPending()
         commands.put(
             Command.Open(generation, startedAtMillis, startSample, contentStartSample),
@@ -180,6 +186,8 @@ internal class AudioFragmentWriter(
      * но и не спасают фрагмент — он будет удалён по команде [abort].
      */
     fun append(source: ShortArray, offset: Int, count: Int): Boolean {
+        if (stopRequested) return false
+
         var copied = 0
         while (copied < count) {
             val block = pendingBlock ?: freeBlocks.poll()?.also {
@@ -206,12 +214,16 @@ internal class AudioFragmentWriter(
         truncated: Boolean,
         contentEndSample: Long? = null,
     ) {
+        if (stopRequested) return
+
         enqueuePending()
         commands.put(Command.Finish(endedAtMillis, endSample, truncated, contentEndSample))
     }
 
     /** Удаляет текущий фрагмент вместе с уже записанным файлом. */
     fun abort() {
+        if (stopRequested) return
+
         discardPending()
         commands.put(Command.Abort)
     }
@@ -222,8 +234,11 @@ internal class AudioFragmentWriter(
      * @return `true`, если поток успел завершиться за [timeoutMs].
      */
     fun stop(timeoutMs: Long): Boolean {
-        enqueuePending()
-        commands.put(Command.Stop)
+        if (!stopRequested) {
+            stopRequested = true
+            enqueuePending()
+            commands.put(Command.Stop)
+        }
         return try {
             thread.join(timeoutMs)
             !thread.isAlive
@@ -365,7 +380,7 @@ internal class AudioFragmentWriter(
             if (samplesSinceSync >= syncSamples) {
                 samplesSinceSync = 0L
                 patchHeader(file)
-                file.fd.sync()
+                syncFile(file)
             }
 
             samplesSinceSpaceCheck += command.count
@@ -427,7 +442,7 @@ internal class AudioFragmentWriter(
         try {
             if (dataBytes > 0L) {
                 patchHeader(file)
-                file.fd.sync()
+                syncFile(file)
             }
         } catch (error: IOException) {
             closeCurrent()

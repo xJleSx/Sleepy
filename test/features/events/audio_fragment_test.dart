@@ -98,6 +98,18 @@ void main() {
       expect(status.fragmentCount, 0);
       expect(status.eventCount, 0);
       expect(status.lastActivityAt, isNull);
+      expect(status.samplesRead, isNull);
+      expect(status.readErrorCount, isNull);
+      expect(status.lastChunkDbfs, isNull);
+      expect(status.noiseFloorDbfs, isNull);
+      expect(status.candidateCount, isNull);
+      expect(status.confirmedEventCount, isNull);
+      expect(status.writerOpenCount, isNull);
+      expect(status.writerSavedCount, isNull);
+      expect(status.writerFailedCount, isNull);
+      expect(status.currentDetectorState, isEmpty);
+      expect(status.lastFragmentPath, isEmpty);
+      expect(status.lastWriterError, isEmpty);
     });
   });
 }

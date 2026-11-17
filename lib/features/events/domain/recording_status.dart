@@ -16,16 +16,16 @@ class RecordingStatus {
     required this.endedAt,
     required this.lastFragmentAt,
     this.lastFragmentPath = '',
-    this.samplesRead = 0,
-    this.readErrorCount = 0,
-    this.lastChunkDbfs = -120,
-    this.noiseFloorDbfs = -120,
+    this.samplesRead,
+    this.readErrorCount,
+    this.lastChunkDbfs,
+    this.noiseFloorDbfs,
     this.currentDetectorState = '',
-    this.candidateCount = 0,
-    this.confirmedEventCount = 0,
-    this.writerOpenCount = 0,
-    this.writerSavedCount = 0,
-    this.writerFailedCount = 0,
+    this.candidateCount,
+    this.confirmedEventCount,
+    this.writerOpenCount,
+    this.writerSavedCount,
+    this.writerFailedCount,
     this.lastWriterError = '',
   });
 
@@ -52,17 +52,21 @@ class RecordingStatus {
   final DateTime? lastFragmentAt;
 
   /// Диагностика текущей или последней завершённой сессии.
+  ///
+  /// Числовые поля равны `null`, если платформа их не прислала. Это
+  /// принципиально для экрана диагностики: отсутствующее значение нельзя
+  /// показывать как реальный ноль.
   final String lastFragmentPath;
-  final int samplesRead;
-  final int readErrorCount;
-  final double lastChunkDbfs;
-  final double noiseFloorDbfs;
+  final int? samplesRead;
+  final int? readErrorCount;
+  final double? lastChunkDbfs;
+  final double? noiseFloorDbfs;
   final String currentDetectorState;
-  final int candidateCount;
-  final int confirmedEventCount;
-  final int writerOpenCount;
-  final int writerSavedCount;
-  final int writerFailedCount;
+  final int? candidateCount;
+  final int? confirmedEventCount;
+  final int? writerOpenCount;
+  final int? writerSavedCount;
+  final int? writerFailedCount;
   final String lastWriterError;
 
   bool get hasError => error.isNotEmpty;
@@ -75,8 +79,8 @@ class RecordingStatus {
 
     return RecordingStatus(
       isRecording: map['isRecording'] == true,
-      fragmentCount: _count(map['fragmentCount']),
-      eventCount: _count(map['eventCount']),
+      fragmentCount: _count(map['fragmentCount']) ?? 0,
+      eventCount: _count(map['eventCount']) ?? 0,
       lastWarning: _text(map['lastWarning']),
       error: _text(map['error']),
       interrupted: map['interrupted'] == true,
@@ -98,9 +102,9 @@ class RecordingStatus {
     );
   }
 
-  static int _count(Object? value) => value is num ? value.toInt() : 0;
+  static int? _count(Object? value) => value is num ? value.toInt() : null;
 
-  static double _dbfs(Object? value) => value is num ? value.toDouble() : -120;
+  static double? _dbfs(Object? value) => value is num ? value.toDouble() : null;
 
   static String _text(Object? value) => value is String ? value : '';
 

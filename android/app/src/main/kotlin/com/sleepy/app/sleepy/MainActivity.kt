@@ -65,6 +65,10 @@ class MainActivity : FlutterActivity() {
                     listFragments(result)
                 }
 
+                "listDiagnosticFiles" -> {
+                    listDiagnosticFiles(result)
+                }
+
                 "playFragment" -> {
                     playFragment(call.argument<String>("path").orEmpty(), result)
                 }
@@ -268,6 +272,53 @@ class MainActivity : FlutterActivity() {
                     result.error(
                         "LIST_FRAGMENTS_ERROR",
                         exception.message ?: "Не удалось прочитать фрагменты",
+                        null
+                    )
+                }
+                return@execute
+            }
+
+            postToUi { result.success(payload) }
+        }
+    }
+
+    /**
+     * Полная диагностика каталога WAV: валидные, пустые, повреждённые и
+     * недоступные файлы. Абсолютные пути наружу не передаются — экрану
+     * диагностики и отчёту достаточно имени файла.
+     */
+    private fun listDiagnosticFiles(result: MethodChannel.Result) {
+        val executor = storageExecutor
+
+        if (executor == null || destroyed) {
+            result.error(
+                "STORAGE_UNAVAILABLE",
+                "Хранилище недоступно",
+                null
+            )
+            return
+        }
+
+        executor.execute {
+            val payload = try {
+                AudioFragmentCatalog
+                    .diagnose(recordingsDirectory())
+                    .map { diagnostic ->
+                        val item = hashMapOf<String, Any>(
+                            "fileName" to diagnostic.fileName,
+                            "startedAtMillis" to diagnostic.startedAtMillis,
+                            "status" to diagnostic.status.name,
+                            "reason" to diagnostic.reason
+                        )
+                        diagnostic.sizeBytes?.let { item["sizeBytes"] = it }
+                        diagnostic.durationMs?.let { item["durationMs"] = it }
+                        item
+                    }
+            } catch (exception: Exception) {
+                postToUi {
+                    result.error(
+                        "LIST_DIAGNOSTIC_FILES_ERROR",
+                        exception.message ?: "Не удалось проверить WAV-файлы",
                         null
                     )
                 }

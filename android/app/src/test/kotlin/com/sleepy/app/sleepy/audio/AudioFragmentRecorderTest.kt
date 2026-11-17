@@ -8,6 +8,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -42,6 +43,13 @@ class AudioFragmentRecorderTest {
         warnings.clear()
         events.clear()
         createRecorder()
+    }
+
+    @After
+    fun tearDown() {
+        if (::recorder.isInitialized) {
+            recorder.stop()
+        }
     }
 
     @Test
@@ -158,6 +166,8 @@ class AudioFragmentRecorderTest {
 
     @Test
     fun truncatedEventCreatesTwoContinuousFragments() {
+        createRecorder(writerQueueBlocks = 1_024)
+
         feed(seconds = 10, loud = false)
         feed(seconds = 61, loud = true)
         feed(seconds = 10, loud = false)
@@ -401,6 +411,118 @@ class AudioFragmentRecorderTest {
     }
 
     @Test
+    fun eventEndingExactlyAtMaximumClosesContinuationAfterPostRoll() {
+        createRecorder(writerQueueBlocks = 1_024)
+
+        feed(seconds = 10, loud = false)
+        feed(seconds = 60, loud = true)
+        feed(seconds = 10, loud = false)
+        recorder.stop()
+
+        assertEquals(1, events.size)
+        assertEquals(2, fragments.size)
+        assertEquals(2, recorder.savedFragments)
+
+        val first = fragments[0]
+        val second = fragments[1]
+
+        assertTrue(first.truncated)
+        assertFalse(second.truncated)
+        assertEquals(68_000L, first.durationMs)
+        assertEquals(8_000L, second.durationMs)
+        assertEquals(first.endSample, second.startSample)
+        assertEquals(second.startSample, second.contentStartSample)
+        assertEquals(second.startSample + 8L * 16_000, second.contentEndSample)
+
+        fragments.forEach { fragment ->
+            val validation = WavFileValidator.diagnose(fragment.file)
+            assertEquals(WavFileValidator.Status.VALID, validation.status)
+            assertTrue(validation.info!!.durationMs > 0L)
+        }
+        assertEquals(2, AudioFragmentCatalog.list(directory).size)
+    }
+
+    @Test
+    fun multiMinuteEventSplitsIntoBoundedValidFragments() {
+        createRecorder(writerQueueBlocks = 1_024)
+
+        feed(seconds = 10, loud = false)
+        feedMillis(125_500, loud = true)
+        feed(seconds = 10, loud = false)
+        recorder.stop()
+
+        assertEquals(1, events.size)
+        assertEquals(3, fragments.size)
+        assertEquals(3, recorder.savedFragments)
+
+        assertTrue(fragments[0].truncated)
+        assertTrue(fragments[1].truncated)
+        assertFalse(fragments[2].truncated)
+        assertEquals(8_000L + 60_000L, fragments[0].durationMs)
+        assertEquals(60_000L, fragments[1].durationMs)
+        assertEquals(5_500L + 8_000L, fragments[2].durationMs)
+
+        fragments.zipWithNext().forEach { (first, second) ->
+            assertEquals(first.endSample, second.startSample)
+            assertEquals(first.contentEndSample, second.contentStartSample)
+        }
+        fragments.forEachIndexed { index, fragment ->
+            assertTrue("Файл $index длиннее лимита", fragment.durationMs <= 68_000L)
+            assertEquals(
+                WavFileValidator.Status.VALID,
+                WavFileValidator.diagnose(fragment.file).status,
+            )
+            assertWavMatches(fragment, fragment.contentStartSample)
+        }
+        assertNoSharedSamples()
+        assertEquals(3, AudioFragmentCatalog.countValid(directory))
+    }
+
+    @Test
+    fun eventSeriesProducesOneFragmentPerEvent() {
+        listOf(10, 50, 100).forEach { eventCount ->
+            resetHarness("series-$eventCount", writerQueueBlocks = 2_048)
+
+            feed(seconds = 10, loud = false)
+            repeat(eventCount) { index ->
+                feedMillis(300 + (index % 4) * 100, loud = true)
+                feedMillis(2_050, loud = false)
+            }
+            feed(seconds = 9, loud = false)
+            recorder.stop()
+
+            assertEquals("События серии $eventCount", eventCount, events.size)
+            assertEquals("Фрагменты серии $eventCount", eventCount, fragments.size)
+            assertEquals(eventCount, recorder.savedFragments)
+            assertEquals(eventCount, AudioFragmentCatalog.countValid(directory))
+            assertNoSharedSamples()
+            fragments.forEachIndexed { index, fragment ->
+                assertEquals(
+                    "Файл $index серии $eventCount",
+                    WavFileValidator.Status.VALID,
+                    WavFileValidator.diagnose(fragment.file).status,
+                )
+                assertWavMatches(fragment, fragment.contentStartSample)
+            }
+        }
+    }
+
+    @Test
+    fun stopDuringCandidateDoesNotLeaveFragment() {
+        feed(seconds = 10, loud = false)
+        feedMillis(100, loud = true)
+
+        assertFalse(recorder.isRecordingEvent)
+
+        recorder.stop()
+
+        assertTrue(events.isEmpty())
+        assertTrue(fragments.isEmpty())
+        assertTrue(wavFiles().isEmpty())
+        assertEquals(0, recorder.savedFragments)
+    }
+
+    @Test
     fun truncatedContinuationHasNoOverlap() {
         recorder.stop()
         createRecorder(writerQueueBlocks = 1_024)
@@ -575,6 +697,10 @@ class AudioFragmentRecorderTest {
         openFile: (File) -> RandomAccessFile = { RandomAccessFile(it, "rw") },
         writerQueueBlocks: Int = AudioFragmentRecorder.DEFAULT_WRITER_BLOCKS,
     ) {
+        if (::recorder.isInitialized) {
+            recorder.stop()
+        }
+
         recorder = AudioFragmentRecorder(
             config = config,
             directory = directory,
@@ -598,7 +724,10 @@ class AudioFragmentRecorderTest {
         )
     }
 
-    private fun resetHarness(folderName: String) {
+    private fun resetHarness(
+        folderName: String,
+        writerQueueBlocks: Int = AudioFragmentRecorder.DEFAULT_WRITER_BLOCKS,
+    ) {
         if (::recorder.isInitialized) {
             recorder.stop()
         }
@@ -610,7 +739,7 @@ class AudioFragmentRecorderTest {
         nowMillis = 1_700_000_000_000L
         freeSpace = Long.MAX_VALUE
         directory = temporaryFolder.newFolder(folderName)
-        createRecorder()
+        createRecorder(writerQueueBlocks = writerQueueBlocks)
     }
 
     private fun feed(seconds: Int, loud: Boolean) {

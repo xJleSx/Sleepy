@@ -22,6 +22,21 @@ data class AudioFragmentInfo(
 )
 
 /**
+ * Строка диагностического каталога: файл показывается независимо от того,
+ * прошёл он проверку или нет. [durationMs] остаётся `null` для битых файлов,
+ * чтобы UI не подменял отсутствующую длительность нулём.
+ */
+internal data class AudioFileDiagnostic(
+    val fileName: String,
+    val filePath: String,
+    val startedAtMillis: Long,
+    val sizeBytes: Long?,
+    val durationMs: Long?,
+    val status: WavFileValidator.Status,
+    val reason: String,
+)
+
+/**
  * Читает каталог `files/recordings` и отдаёт только фрагменты новой
  * системы событий (`event_*.wav`).
  *
@@ -39,6 +54,32 @@ internal object AudioFragmentCatalog {
     private const val WAV_EXTENSION = "wav"
 
     fun list(directory: File): List<AudioFragmentInfo> {
+        return diagnose(directory).mapNotNull { diagnostic ->
+            val durationMs = diagnostic.durationMs ?: return@mapNotNull null
+            val sizeBytes = diagnostic.sizeBytes ?: return@mapNotNull null
+            if (diagnostic.status != WavFileValidator.Status.VALID) {
+                return@mapNotNull null
+            }
+
+            AudioFragmentInfo(
+                id = diagnostic.fileName,
+                fileName = diagnostic.fileName,
+                filePath = diagnostic.filePath,
+                startedAtMillis = diagnostic.startedAtMillis,
+                durationMs = durationMs,
+                sizeBytes = sizeBytes,
+            )
+        }
+    }
+
+    /**
+     * Все WAV-фрагменты новой системы событий вместе с результатом проверки.
+     *
+     * В отличие от [list], возвращает и пустые, и повреждённые файлы: экран
+     * диагностики должен показывать полную картину. Файлы не изменяются и не
+     * удаляются.
+     */
+    fun diagnose(directory: File): List<AudioFileDiagnostic> {
         val files = try {
             directory.listFiles() ?: return emptyList()
         } catch (_: SecurityException) {
@@ -48,9 +89,9 @@ internal object AudioFragmentCatalog {
         return files
             .asSequence()
             .filter { isEventFragment(it) }
-            .mapNotNull { describe(it) }
+            .map { diagnoseFile(it) }
             .sortedWith(
-                compareByDescending<AudioFragmentInfo> { it.startedAtMillis }
+                compareByDescending<AudioFileDiagnostic> { it.startedAtMillis }
                     .thenByDescending { it.fileName },
             )
             .toList()
@@ -82,16 +123,22 @@ internal object AudioFragmentCatalog {
         false
     }
 
-    private fun describe(file: File): AudioFragmentInfo? {
-        val info = WavFileValidator.inspect(file) ?: return null
+    private fun diagnoseFile(file: File): AudioFileDiagnostic {
+        val validation = WavFileValidator.diagnose(file)
+        val size = validation.info?.fileSize ?: try {
+            if (file.isFile) file.length() else null
+        } catch (_: SecurityException) {
+            null
+        }
 
-        return AudioFragmentInfo(
-            id = file.name,
+        return AudioFileDiagnostic(
             fileName = file.name,
             filePath = file.absolutePath,
             startedAtMillis = eventTimeMillis(file),
-            durationMs = info.durationMs,
-            sizeBytes = info.fileSize,
+            sizeBytes = size,
+            durationMs = validation.info?.durationMs,
+            status = validation.status,
+            reason = validation.reason,
         )
     }
 

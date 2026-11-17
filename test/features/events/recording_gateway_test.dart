@@ -41,32 +41,91 @@ void main() {
       expect(call.method, 'listFragments');
 
       return <Object?>[
-        payload(name: 'event_20261114_010000_000_001.wav', startedAtMillis: 100),
+        payload(
+          name: 'event_20261114_010000_000_001.wav',
+          startedAtMillis: 100,
+        ),
         <String, Object>{'id': 'broken'},
-        payload(name: 'event_20261115_230000_000_001.wav', startedAtMillis: 300),
-        payload(name: 'event_20261115_230000_000_002.wav', startedAtMillis: 300),
-        payload(name: 'event_20261113_230000_000_001.wav', startedAtMillis: 200),
+        payload(
+          name: 'event_20261115_230000_000_001.wav',
+          startedAtMillis: 300,
+        ),
+        payload(
+          name: 'event_20261115_230000_000_002.wav',
+          startedAtMillis: 300,
+        ),
+        payload(
+          name: 'event_20261113_230000_000_001.wav',
+          startedAtMillis: 200,
+        ),
       ];
     });
 
     final fragments = await createGateway().fetchFragments();
 
-    expect(
-      fragments.map((fragment) => fragment.id),
-      <String>[
-        'event_20261115_230000_000_002.wav',
-        'event_20261115_230000_000_001.wav',
-        'event_20261113_230000_000_001.wav',
-        'event_20261114_010000_000_001.wav',
-      ],
-    );
+    expect(fragments.map((fragment) => fragment.id), <String>[
+      'event_20261115_230000_000_002.wav',
+      'event_20261115_230000_000_001.wav',
+      'event_20261113_230000_000_001.wav',
+      'event_20261114_010000_000_001.wav',
+    ]);
   });
 
   test('returns an empty list when the platform sends nothing', () async {
     mockHandler((call) async => null);
 
     expect(await createGateway().fetchFragments(), isEmpty);
+    expect(await createGateway().fetchDiagnosticFiles(), isEmpty);
   });
+
+  test(
+    'reads diagnostic files newest first and keeps problem statuses',
+    () async {
+      mockHandler((call) async {
+        expect(call.method, 'listDiagnosticFiles');
+
+        return <Object?>[
+          <String, Object>{
+            'fileName': 'event_old.wav',
+            'startedAtMillis': 100,
+            'sizeBytes': 44,
+            'status': 'EMPTY',
+            'reason': 'Нет аудиоданных',
+          },
+          <String, Object>{
+            'fileName': 'event_new.wav',
+            'startedAtMillis': 300,
+            'durationMs': 21000,
+            'sizeBytes': 672044,
+            'status': 'VALID',
+            'reason': '',
+          },
+          <String, Object>{'fileName': 'broken.wav'},
+          <String, Object>{
+            'fileName': 'event_mid.wav',
+            'startedAtMillis': 200,
+            'sizeBytes': 44,
+            'status': 'CORRUPTED',
+            'reason': 'Обрезанный data-чанк',
+          },
+        ];
+      });
+
+      final files = await createGateway().fetchDiagnosticFiles();
+
+      expect(files.map((file) => file.fileName), <String>[
+        'event_new.wav',
+        'event_mid.wav',
+        'event_old.wav',
+      ]);
+      expect(files.first.status.name, 'valid');
+      expect(files.first.duration, const Duration(seconds: 21));
+      expect(files[1].status.name, 'corrupted');
+      expect(files[1].duration, isNull);
+      expect(files[2].status.name, 'empty');
+      expect(files[2].reason, 'Нет аудиоданных');
+    },
+  );
 
   test('reads recording status', () async {
     mockHandler((call) async {
@@ -114,14 +173,20 @@ void main() {
 
   test('wraps platform errors into a readable exception', () async {
     mockHandler((call) async {
-      throw PlatformException(code: 'LIST_FRAGMENTS_ERROR', message: 'Нет доступа');
+      throw PlatformException(
+        code: 'LIST_FRAGMENTS_ERROR',
+        message: 'Нет доступа',
+      );
     });
 
     expect(
       createGateway().fetchFragments(),
       throwsA(
-        isA<RecordingGatewayException>()
-            .having((error) => error.message, 'message', 'Нет доступа'),
+        isA<RecordingGatewayException>().having(
+          (error) => error.message,
+          'message',
+          'Нет доступа',
+        ),
       ),
     );
   });
@@ -131,9 +196,6 @@ void main() {
       channel: const MethodChannel('sleepy.test/missing'),
     );
 
-    expect(
-      gateway.fetchStatus(),
-      throwsA(isA<RecordingGatewayException>()),
-    );
+    expect(gateway.fetchStatus(), throwsA(isA<RecordingGatewayException>()));
   });
 }

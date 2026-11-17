@@ -159,6 +159,8 @@ class AudioFragmentCatalogTest {
             .putInt(0)
             .array()
 
+        val totalSize = 44 + listChunk.size + 32_000
+        ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN).putInt(4, totalSize - 8)
         file.writeBytes(header.copyOfRange(0, 12) + listChunk + header.copyOfRange(12, 44) + ByteArray(32_000))
 
         val fragment = AudioFragmentCatalog.list(directory).single()
@@ -177,6 +179,69 @@ class AudioFragmentCatalogTest {
         assertEquals(file.absolutePath, fragment.filePath)
         assertTrue(fragment.startedAtMillis > 0L)
         assertEquals(44L + 32_000L, fragment.sizeBytes)
+    }
+
+    @Test
+    fun diagnoseKeepsValidEmptyAndCorruptedFilesSeparate() {
+        val directory = temporaryFolder.newFolder("recordings")
+
+        writeWav(directory, "event_20261115_230000_000_001.wav", 32_000)
+        writeWav(directory, "event_20261115_230000_000_002.wav", dataBytes = 0)
+        File(directory, "event_20261115_230000_000_003.wav")
+            .writeText("not a wave file")
+
+        val diagnostics = AudioFragmentCatalog.diagnose(directory)
+
+        assertEquals(3, diagnostics.size)
+        assertEquals(
+            WavFileValidator.Status.VALID,
+            diagnostics.first { it.fileName.endsWith("_001.wav") }.status,
+        )
+        assertEquals(
+            WavFileValidator.Status.EMPTY,
+            diagnostics.first { it.fileName.endsWith("_002.wav") }.status,
+        )
+        assertEquals(
+            WavFileValidator.Status.CORRUPTED,
+            diagnostics.first { it.fileName.endsWith("_003.wav") }.status,
+        )
+    }
+
+    @Test
+    fun diagnoseDoesNotInventDurationForEmptyOrCorruptedFiles() {
+        val directory = temporaryFolder.newFolder("recordings")
+
+        writeWav(directory, "event_20261115_230000_000_001.wav", dataBytes = 0)
+        File(directory, "event_20261115_230000_000_002.wav")
+            .writeBytes(wavHeader(dataBytes = 100_000) + ByteArray(5_000))
+
+        val diagnostics = AudioFragmentCatalog.diagnose(directory)
+
+        assertEquals(2, diagnostics.size)
+        assertTrue(diagnostics.all { it.durationMs == null })
+    }
+
+    @Test
+    fun diagnoseMarksMissingFileAsFailed() {
+        val missing = File(temporaryFolder.root, "event_missing.wav")
+
+        val validation = WavFileValidator.diagnose(missing)
+
+        assertEquals(WavFileValidator.Status.FAILED, validation.status)
+        assertTrue(validation.reason.isNotBlank())
+    }
+
+    @Test
+    fun diagnoseExplainsTruncatedDataChunk() {
+        val directory = temporaryFolder.newFolder("recordings")
+        val file = File(directory, "event_20261115_230000_000_001.wav")
+
+        file.writeBytes(wavHeader(dataBytes = 100_000) + ByteArray(5_000))
+
+        val validation = WavFileValidator.diagnose(file)
+
+        assertEquals(WavFileValidator.Status.CORRUPTED, validation.status)
+        assertTrue(validation.reason.contains("data", ignoreCase = true))
     }
 
     private fun writeWav(

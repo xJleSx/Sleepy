@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sleepy/app/theme/app_theme.dart';
+import 'package:sleepy/features/diagnostics/domain/diagnostic_audio_file.dart';
 import 'package:sleepy/features/events/data/recording_gateway.dart';
 import 'package:sleepy/features/events/domain/audio_fragment.dart';
 import 'package:sleepy/features/events/domain/recording_status.dart';
@@ -12,8 +13,8 @@ class FakeGateway implements RecordingGateway {
     RecordingStatus? status,
     List<AudioFragment>? fragments,
     this.error,
-  })  : status = status ?? RecordingStatus.empty,
-        fragments = fragments ?? <AudioFragment>[];
+  }) : status = status ?? RecordingStatus.empty,
+       fragments = fragments ?? <AudioFragment>[];
 
   RecordingStatus status;
   List<AudioFragment> fragments;
@@ -36,6 +37,12 @@ class FakeGateway implements RecordingGateway {
 
     if (error != null) throw error!;
     return List<AudioFragment>.of(fragments);
+  }
+
+  @override
+  Future<List<DiagnosticAudioFile>> fetchDiagnosticFiles() async {
+    if (error != null) throw error!;
+    return const <DiagnosticAudioFile>[];
   }
 }
 
@@ -193,8 +200,9 @@ void main() {
     expect(find.text('Пока нет аудиособытий'), findsOneWidget);
   });
 
-  testWidgets('lists saved fragments with time, duration and size',
-      (tester) async {
+  testWidgets('lists saved fragments with time, duration and size', (
+    tester,
+  ) async {
     final gateway = FakeGateway(
       status: status(fragmentCount: 2, eventCount: 1),
       fragments: <AudioFragment>[
@@ -219,8 +227,9 @@ void main() {
     expect(find.text('Пока нет аудиособытий'), findsNothing);
   });
 
-  testWidgets('selecting a fragment opens the player and switches on tap',
-      (tester) async {
+  testWidgets('selecting a fragment opens the player and switches on tap', (
+    tester,
+  ) async {
     final first = fragment(
       id: 'event_20261115_230000_000_001.wav',
       startedAt: DateTime(2026, 11, 15, 23, 0, 0),
@@ -280,8 +289,9 @@ void main() {
     expect(player.snapshot.isPlaying, isFalse);
   });
 
-  testWidgets('shows warnings, errors and the last recording time',
-      (tester) async {
+  testWidgets('shows warnings, errors and the last recording time', (
+    tester,
+  ) async {
     final gateway = FakeGateway(
       status: status(
         warning: 'Мало свободного места',
@@ -296,13 +306,18 @@ void main() {
     expect(find.text('Ошибка записи'), findsOneWidget);
     expect(find.text('Микрофон занят'), findsOneWidget);
     expect(find.text('Мало свободного места'), findsOneWidget);
-    expect(find.textContaining('Последняя запись: 15.11.2026, 20:02'),
-        findsOneWidget);
+    expect(
+      find.textContaining('Последняя запись: 15.11.2026, 20:02'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('shows a retry card when loading fails, and recovers',
-      (tester) async {
-    final gateway = FakeGateway(error: const RecordingGatewayException('Нет доступа'));
+  testWidgets('shows a retry card when loading fails, and recovers', (
+    tester,
+  ) async {
+    final gateway = FakeGateway(
+      error: const RecordingGatewayException('Нет доступа'),
+    );
 
     await pumpPage(tester, gateway, FakePlayer());
     await tester.pump();
@@ -319,8 +334,9 @@ void main() {
     expect(find.text('Пока нет аудиособытий'), findsOneWidget);
   });
 
-  testWidgets('stops playback when the selected file disappears',
-      (tester) async {
+  testWidgets('stops playback when the selected file disappears', (
+    tester,
+  ) async {
     final item = fragment(
       id: 'event_20261115_230000_000_001.wav',
       startedAt: DateTime(2026, 11, 15, 23, 0, 0),

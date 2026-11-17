@@ -62,6 +62,26 @@ class RecordingStatusStoreTest {
     }
 
     @org.junit.Test
+    fun countersRemainCumulativeAcrossHundredSessions() {
+        repeat(100) { index ->
+            store.startSession("session-$index", index.toLong(), index)
+            store.recordEventDetected(index.toLong())
+            store.recordFragmentSaved("/recordings/event_$index.wav", index.toLong())
+
+            org.junit.Assert.assertEquals(index + 1, store.eventCount())
+            org.junit.Assert.assertEquals(index + 1, store.fragmentCount())
+        }
+
+        val status = store.readStatus()
+        org.junit.Assert.assertEquals(100, status["eventCount"])
+        org.junit.Assert.assertEquals(100, status["fragmentCount"])
+        org.junit.Assert.assertEquals(
+            "/recordings/event_99.wav",
+            status["lastFragmentPath"],
+        )
+    }
+
+    @org.junit.Test
     fun eventAndFragmentCountersAreIndependent() {
         store.startSession("session-1", 0L, 0)
 

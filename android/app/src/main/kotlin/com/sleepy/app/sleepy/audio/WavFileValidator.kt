@@ -30,6 +30,19 @@ internal object WavFileValidator {
     private const val HEADER_SCAN_LIMIT = 1L shl 20
     private const val MIN_DATA_BYTES = 2L
 
+    enum class Status {
+        VALID,
+        EMPTY,
+        CORRUPTED,
+        FAILED,
+    }
+
+    data class Validation(
+        val status: Status,
+        val info: WavInfo? = null,
+        val reason: String = "",
+    )
+
     data class WavInfo(
         val dataBytes: Long,
         val fileSize: Long,
@@ -42,30 +55,57 @@ internal object WavFileValidator {
      * Возвращает описание валидного фрагмента или `null`, если файл пуст,
      * повреждён, недописан или имеет другой формат.
      */
-    fun inspect(file: File): WavInfo? {
+    fun inspect(file: File): WavInfo? = diagnose(file).info
+
+    /**
+     * Подробная проверка для экрана диагностики.
+     *
+     * В отличие от [inspect], различает пустой, повреждённый и недоступный
+     * файл, чтобы пользователь видел причину, а не только «файл не прошёл
+     * проверку».
+     */
+    fun diagnose(file: File): Validation {
         val size = try {
+            if (!file.isFile) {
+                return Validation(Status.FAILED, reason = "Файл не найден")
+            }
             file.length()
         } catch (_: SecurityException) {
-            return null
+            return Validation(Status.FAILED, reason = "Нет доступа к файлу")
         }
 
-        if (size < AudioFragmentWriter.WAV_HEADER_SIZE + MIN_DATA_BYTES) return null
+        if (size == 0L) {
+            return Validation(Status.EMPTY, reason = "Файл пуст")
+        }
+        if (size < AudioFragmentWriter.WAV_HEADER_SIZE) {
+            return Validation(
+                Status.CORRUPTED,
+                reason = "Файл короче WAV-заголовка",
+            )
+        }
 
         return try {
             read(file, size)
         } catch (_: IOException) {
-            null
+            Validation(Status.CORRUPTED, reason = "Не удалось прочитать WAV-заголовок")
         } catch (_: SecurityException) {
-            null
+            Validation(Status.FAILED, reason = "Нет доступа к файлу")
         }
     }
 
-    private fun read(file: File, size: Long): WavInfo? {
+    private fun read(file: File, size: Long): Validation {
         RandomAccessFile(file, "r").use { raf ->
-            if (readAscii(raf, 4) != "RIFF") return null
+            if (readAscii(raf, 4) != "RIFF") {
+                return Validation(Status.CORRUPTED, reason = "Нет заголовка RIFF")
+            }
+
+            raf.seek(4L)
+            val riffSize = readLe32(raf).toLong() and 0xFFFF_FFFFL
 
             raf.seek(8L)
-            if (readAscii(raf, 4) != "WAVE") return null
+            if (readAscii(raf, 4) != "WAVE") {
+                return Validation(Status.CORRUPTED, reason = "Формат не WAVE")
+            }
 
             var byteRateValid = false
             var dataBytes = -1L
@@ -79,7 +119,12 @@ internal object WavFileValidator {
 
                 when (chunkId) {
                     "fmt " -> {
-                        if (chunkSize < 16L || bodyStart + 16L > size) return null
+                        if (chunkSize < 16L || bodyStart + 16L > size) {
+                            return Validation(
+                                Status.CORRUPTED,
+                                reason = "Некорректный fmt-чанк",
+                            )
+                        }
 
                         raf.seek(bodyStart)
                         val format = readLe16(raf)
@@ -103,7 +148,10 @@ internal object WavFileValidator {
                             blockAlign != EXPECTED_BLOCK_ALIGN ||
                             declaredByteRate.toLong() != EXPECTED_BYTE_RATE
                         ) {
-                            return null
+                            return Validation(
+                                Status.CORRUPTED,
+                                reason = "Неподдерживаемый формат WAV",
+                            )
                         }
 
                         byteRateValid = true
@@ -111,7 +159,12 @@ internal object WavFileValidator {
 
                     "data" -> {
                         val available = (size - bodyStart).coerceAtLeast(0L)
-                        if (chunkSize != available) return null
+                        if (chunkSize != available) {
+                            return Validation(
+                                Status.CORRUPTED,
+                                reason = "Размер data-чанка не совпадает с файлом",
+                            )
+                        }
 
                         dataBytes = chunkSize
                         break
@@ -125,9 +178,41 @@ internal object WavFileValidator {
                 position = bodyStart + chunkSize + (chunkSize and 1L)
             }
 
-            if (!byteRateValid || dataBytes < MIN_DATA_BYTES) return null
+            if (!byteRateValid) {
+                return Validation(
+                    Status.CORRUPTED,
+                    reason = "Не найден корректный fmt-чанк",
+                )
+            }
+            if (dataBytes < 0L) {
+                return Validation(Status.EMPTY, reason = "Нет аудиоданных")
+            }
+            if (dataBytes == 0L) {
+                return Validation(Status.EMPTY, reason = "Нет аудиоданных")
+            }
+            if (dataBytes < MIN_DATA_BYTES) {
+                return Validation(
+                    Status.CORRUPTED,
+                    reason = "Некорректный размер аудиоданных",
+                )
+            }
+            if (dataBytes % EXPECTED_BLOCK_ALIGN != 0L) {
+                return Validation(
+                    Status.CORRUPTED,
+                    reason = "Размер данных не выровнен по сэмплам",
+                )
+            }
+            if (riffSize != size - 8L) {
+                return Validation(
+                    Status.CORRUPTED,
+                    reason = "Размер RIFF-чанка не совпадает с файлом",
+                )
+            }
 
-            return WavInfo(dataBytes = dataBytes, fileSize = size)
+            return Validation(
+                Status.VALID,
+                info = WavInfo(dataBytes = dataBytes, fileSize = size),
+            )
         }
     }
 

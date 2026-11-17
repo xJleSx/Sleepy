@@ -149,6 +149,42 @@ class AudioEventDetectorTest {
     }
 
     @Test
+    fun eventEndingExactlyAtMaximumIsFinishedAsContinuation() {
+        feed(SILENCE_DBFS, 1_000)
+        feed(-10.0, 60_000)
+        feed(SILENCE_DBFS, 3_000)
+
+        assertEquals(1L, detector.confirmedEventCountTotal)
+        assertEquals(2, listener.finished.size)
+
+        val first = listener.finished[0]
+        val last = listener.finished[1]
+
+        assertTrue(first.truncated)
+        assertEquals(60_000L, first.durationMs)
+        assertFalse(last.truncated)
+        assertEquals(0L, last.durationMs)
+        assertEquals(first.endSample, last.startSample)
+        assertEquals(first.endSample, last.endSample)
+    }
+
+    @Test
+    fun shortContinuationAfterMaximumIsNotSwallowed() {
+        feed(SILENCE_DBFS, 1_000)
+        feed(-10.0, 60_100)
+        feed(SILENCE_DBFS, 3_000)
+
+        assertEquals(1L, detector.confirmedEventCountTotal)
+        assertEquals(2, listener.finished.size)
+
+        val last = listener.finished[1]
+
+        assertFalse(last.truncated)
+        assertEquals(100L, last.durationMs)
+        assertEquals(listener.finished[0].endSample, last.startSample)
+    }
+
+    @Test
     fun noiseFloorDoesNotRiseDuringActiveEvent() {
         feed(-60.0, 1_000)
         val floorBeforeEvent = detector.noiseFloorDbfs

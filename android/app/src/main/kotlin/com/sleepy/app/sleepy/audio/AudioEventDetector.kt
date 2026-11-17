@@ -98,6 +98,7 @@ class AudioEventDetector(
     private var lastLoudSample = 0L
     private var lastLoudMillis = 0L
     private var quietSamples = 0L
+    private var eventIsContinuation = false
 
     /** Текущая оценка фонового шума в dBFS. */
     val noiseFloorDbfs: Double
@@ -325,6 +326,7 @@ class AudioEventDetector(
         lastLoudSample = chunkEndSample
         lastLoudMillis = chunkEndMillis
         quietSamples = 0L
+        eventIsContinuation = false
 
         clearCandidate()
 
@@ -341,6 +343,7 @@ class AudioEventDetector(
         lastLoudSample = startSample
         lastLoudMillis = startMillis
         quietSamples = 0L
+        eventIsContinuation = true
         clearCandidate()
 
         listener?.onEventStarted(startMillis, startSample)
@@ -351,16 +354,25 @@ class AudioEventDetector(
 
         val durationSamples = lastLoudSample - eventStartSample
         val loudSamples = eventLoudSamples
+        val continuation = eventIsContinuation
 
         state = DetectorState.QUIET
         quietSamples = 0L
 
-        if (durationSamples < config.minEventSamples || loudSamples <= 0L) {
+        // Хвост после лимита 60 с может быть короче minEventMs или вообще
+        // не содержать громких сэмплов, если событие закончилось ровно на
+        // границе. Это всё ещё часть уже подтверждённого события, поэтому
+        // его нельзя проглатывать: иначе recorder оставит файл открытым.
+        if (!continuation && (durationSamples < config.minEventSamples || loudSamples <= 0L)) {
             clearEvent()
             return null
         }
 
-        val meanSquare = eventSumSquares / (loudSamples.toDouble() * FULL_SCALE_SQUARE)
+        val meanSquare = if (loudSamples <= 0L) {
+            0.0
+        } else {
+            eventSumSquares / (loudSamples.toDouble() * FULL_SCALE_SQUARE)
+        }
         val averageDbfs = if (meanSquare <= 0.0) {
             MIN_DBFS
         } else {
@@ -409,6 +421,7 @@ class AudioEventDetector(
         eventPeakDbfs = MIN_DBFS
         lastLoudSample = 0L
         lastLoudMillis = 0L
+        eventIsContinuation = false
     }
 
     companion object {

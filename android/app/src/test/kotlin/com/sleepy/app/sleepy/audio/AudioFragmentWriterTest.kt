@@ -229,11 +229,100 @@ class AudioFragmentWriterTest {
         assertTrue(writer.lastSavedPathText.endsWith("_002.wav"))
     }
 
+    @Test
+    fun periodicSyncFailureDeletesFragmentAndWriterRecovers() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("sync")
+        var syncCalls = 0
+        val writer = newWriter(
+            directory = directory,
+            listener = listener,
+            syncFile = {
+                syncCalls += 1
+                if (syncCalls == 1) {
+                    throw IOException("Смоделированная ошибка sync")
+                }
+            },
+        )
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        assertTrue(writer.append(ShortArray(80_000) { 1 }, 0, 80_000))
+        writer.finish(6_000L, 80_000L, truncated = false, contentEndSample = 80_000L)
+
+        writer.open(2L, 7_000L, 80_000L, 80_000L)
+        assertTrue(writer.append(ShortArray(80_000) { 2 }, 0, 80_000))
+        writer.finish(12_000L, 160_000L, truncated = false, contentEndSample = 160_000L)
+
+        assertTrue(writer.stop(5_000))
+
+        assertEquals(1, listener.failed.size)
+        assertEquals(1, listener.saved.size)
+        assertTrue(listener.saved.single().file.name.endsWith("_002.wav"))
+        assertEquals(1, wavFiles(directory).size)
+        assertTrue(writer.lastErrorText.contains("sync"))
+        assertEquals(2L, writer.openCountTotal)
+        assertEquals(1L, writer.savedCountTotal)
+        assertEquals(1L, writer.failedCountTotal)
+        assertTrue(syncCalls >= 3)
+    }
+
+    @Test
+    fun closeSyncFailureDeletesFragmentWithoutSavingIt() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("close-sync")
+        val writer = newWriter(
+            directory = directory,
+            listener = listener,
+            syncFile = { throw IOException("Смоделированная ошибка sync") },
+        )
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        assertTrue(writer.append(ShortArray(100) { 1 }, 0, 100))
+        writer.finish(2_000L, 100L, truncated = false, contentEndSample = 100L)
+        assertTrue(writer.stop(5_000))
+
+        assertTrue(listener.saved.isEmpty())
+        assertEquals(1, listener.failed.size)
+        assertTrue(wavFiles(directory).isEmpty())
+        assertEquals(1L, writer.failedCountTotal)
+        assertTrue(writer.lastErrorText.contains("sync"))
+    }
+
+    @Test
+    fun operationsAfterStopAreIgnoredAndRepeatedStopIsSafe() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("stopped")
+        val writer = newWriter(directory, listener)
+
+        writer.open(1L, 1_000L, 0L, 0L)
+        assertTrue(writer.append(ShortArray(100) { 1 }, 0, 100))
+        writer.finish(2_000L, 100L, truncated = false, contentEndSample = 100L)
+        assertTrue(writer.stop(5_000))
+
+        val filesAfterStop = wavFiles(directory).toList()
+        val savedAfterStop = listener.saved.size
+
+        writer.open(2L, 3_000L, 100L, 100L)
+        assertFalse(writer.append(ShortArray(100) { 2 }, 0, 100))
+        writer.finish(4_000L, 200L, truncated = false, contentEndSample = 200L)
+        writer.abort()
+
+        assertTrue(writer.stop(5_000))
+        assertTrue(writer.stop(5_000))
+
+        assertEquals(filesAfterStop, wavFiles(directory))
+        assertEquals(savedAfterStop, listener.saved.size)
+        assertTrue(listener.failed.isEmpty())
+        assertEquals(1L, writer.openCountTotal)
+        assertTrue(listener.saved.single().file.isFile)
+    }
+
     private fun newWriter(
         directory: File,
         listener: AudioFragmentWriter.Listener,
         openFile: (File) -> RandomAccessFile = { RandomAccessFile(it, "rw") },
         queueBlocks: Int = 256,
+        syncFile: (RandomAccessFile) -> Unit = { it.fd.sync() },
     ): AudioFragmentWriter = AudioFragmentWriter(
         config = config,
         directory = directory,
@@ -241,6 +330,7 @@ class AudioFragmentWriterTest {
         openFile = openFile,
         freeSpaceProvider = { Long.MAX_VALUE },
         queueBlocks = queueBlocks,
+        syncFile = syncFile,
     )
 
     private fun wavFiles(directory: File): List<File> =

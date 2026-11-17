@@ -449,6 +449,79 @@ class AudioCaptureSessionTest {
     }
 
     @Test
+    fun stopImmediatelyAfterStartIsSafeAndReleasesResources() {
+        val source = BlockingAudioSource()
+        val session = newSession(sourceFactory = { source })
+
+        assertTrue(session.start())
+        session.stop()
+        session.stop()
+        session.stop()
+
+        assertTrue(session.awaitStopped(10_000))
+        assertFalse(session.isRunning)
+        assertEquals(1, status.startSessions.size)
+        assertEquals(1, status.stopped.get())
+        assertTrue(status.interruptions.isEmpty())
+        assertTrue(status.errors.isEmpty())
+        assertTrue(source.stopCalls >= 1)
+        assertEquals(1, source.releaseCalls)
+        assertTrue(wavFiles().isEmpty())
+        assertNoRecordingThreads()
+    }
+
+    @Test
+    fun manySequentialSessionsKeepFilesAndCountersConsistent() {
+        val sources = CopyOnWriteArrayList<FakeAudioSource>()
+        val session = newSession(
+            sourceFactory = {
+                newSource().also { sources += it }
+            },
+        )
+        val previousLengths = mutableMapOf<File, Long>()
+
+        repeat(30) { index ->
+            assertTrue("Запуск сессии ${index + 1}", session.start())
+            assertTrue(
+                "Источник ${index + 1} должен отдать все сэмплы",
+                sources[index].exhausted.await(10, TimeUnit.SECONDS),
+            )
+            session.stop()
+            assertTrue(session.awaitStopped(10_000))
+
+            assertEquals(index + 1, status.startSessions.size)
+            assertEquals(index + 1, status.stopped.get())
+            assertEquals(index + 1, status.events.size)
+            assertEquals(index + 1, status.fragments.size)
+            assertEquals(index + 1, status.fragmentCount)
+            assertEquals(index + 1, wavFiles().size)
+
+            previousLengths.forEach { (file, length) ->
+                assertEquals(
+                    "Старый файл изменился: ${file.name}",
+                    length,
+                    file.length(),
+                )
+            }
+            wavFiles().forEach { file -> previousLengths[file] = file.length() }
+        }
+
+        assertEquals(30, status.startSessions.map { it.first }.toSet().size)
+        assertEquals(1, sources.map { it.releaseCalls }.toSet().size)
+        assertEquals(1, sources.first().releaseCalls)
+        assertTrue(status.interruptions.isEmpty())
+        assertTrue(status.errors.isEmpty())
+        assertEquals(30, AudioFragmentCatalog.countValid(directory))
+        AudioFragmentCatalog.list(directory).forEach { fragment ->
+            assertEquals(
+                WavFileValidator.Status.VALID,
+                WavFileValidator.diagnose(File(fragment.filePath)).status,
+            )
+        }
+        assertNoRecordingThreads()
+    }
+
+    @Test
     fun secondSessionObjectIsRejectedWhileFirstIsActive() {
         val firstSource = BlockingAudioSource()
         val first = newSession(sourceFactory = { firstSource })
@@ -515,6 +588,18 @@ class AudioCaptureSessionTest {
 
     private fun wavFiles(): List<File> =
         directory.listFiles { file -> file.extension == "wav" }?.toList().orEmpty()
+
+    private fun assertNoRecordingThreads() {
+        val leaked = Thread.getAllStackTraces().keys.filter { thread ->
+            thread.isAlive &&
+                (
+                    thread.name == "SleepyAudioCapture" ||
+                        thread.name == "sleepy-fragment-writer"
+                    )
+        }
+
+        assertTrue("Остались живые аудиопотоки: ${leaked.map { it.name }}", leaked.isEmpty())
+    }
 
     private fun writeValidWav(
         directory: File,
@@ -704,6 +789,12 @@ class AudioCaptureSessionTest {
         @Volatile
         private var stopped = false
 
+        @Volatile
+        var stopCalls = 0
+
+        @Volatile
+        var releaseCalls = 0
+
         override fun start() = Unit
 
         override fun read(destination: ShortArray): Int {
@@ -716,13 +807,16 @@ class AudioCaptureSessionTest {
         }
 
         override fun stop() {
+            stopCalls += 1
             synchronized(lock) {
                 stopped = true
                 lock.notifyAll()
             }
         }
 
-        override fun release() = Unit
+        override fun release() {
+            releaseCalls += 1
+        }
     }
 
     private class FailingRandomAccessFile(file: File) : RandomAccessFile(file, "rw") {
