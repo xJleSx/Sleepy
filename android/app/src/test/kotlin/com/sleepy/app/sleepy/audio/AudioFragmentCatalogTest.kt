@@ -182,6 +182,35 @@ class AudioFragmentCatalogTest {
     }
 
     @Test
+    fun includesExactContentBoundariesFromSidecar() {
+        val directory = temporaryFolder.newFolder("recordings")
+        val file = writeWav(directory, "event_20261115_230000_000_001.wav", 32_000)
+        val saved = SavedAudioFragment(
+            file = file,
+            startedAtMillis = 1_234L,
+            endedAtMillis = 2_234L,
+            durationMs = 1_000L,
+            samples = 16_000L,
+            startSample = 500L,
+            endSample = 16_500L,
+            truncated = true,
+            contentStartSample = 100L,
+            contentEndSample = 16_100L,
+        )
+        assertTrue(AudioFragmentMetadata.write(file, saved, 16_000))
+
+        val fragment = AudioFragmentCatalog.list(directory).single()
+
+        assertEquals(1, AudioFragmentCatalog.list(directory).size)
+        assertEquals(1_234L, fragment.metadata?.startedAtMillis)
+        assertEquals(500L, fragment.metadata?.startSample)
+        assertEquals(16_500L, fragment.metadata?.endSample)
+        assertEquals(100L, fragment.metadata?.contentStartSample)
+        assertEquals(16_100L, fragment.metadata?.contentEndSample)
+        assertTrue(fragment.metadata?.truncated == true)
+    }
+
+    @Test
     fun diagnoseKeepsValidEmptyAndCorruptedFilesSeparate() {
         val directory = temporaryFolder.newFolder("recordings")
 

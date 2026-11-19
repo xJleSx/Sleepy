@@ -19,6 +19,7 @@ data class AudioFragmentInfo(
     val startedAtMillis: Long,
     val durationMs: Long,
     val sizeBytes: Long,
+    val metadata: AudioFragmentMetadata? = null,
 )
 
 /**
@@ -61,6 +62,7 @@ internal object AudioFragmentCatalog {
                 return@mapNotNull null
             }
 
+            val file = File(diagnostic.filePath)
             AudioFragmentInfo(
                 id = diagnostic.fileName,
                 fileName = diagnostic.fileName,
@@ -68,6 +70,7 @@ internal object AudioFragmentCatalog {
                 startedAtMillis = diagnostic.startedAtMillis,
                 durationMs = durationMs,
                 sizeBytes = sizeBytes,
+                metadata = AudioFragmentMetadata.read(file),
             )
         }
     }

@@ -24,6 +24,62 @@ void main() {
       );
     });
 
+    test('reads exact sidecar boundaries', () {
+      final fragment = AudioFragment.parse(<String, Object>{
+        'id': 'event_20261115_230000_000_001.wav',
+        'fileName': 'event_20261115_230000_000_001.wav',
+        'filePath': '/tmp/event_20261115_230000_000_001.wav',
+        'startedAtMillis': 1763240400000,
+        'durationMs': 21000,
+        'sizeBytes': 672044,
+        'metadataAvailable': true,
+        'contentStartSample': 4800,
+        'contentEndSample': 340800,
+        'detectorStartSample': 4600,
+        'detectorEndSample': 341000,
+        'truncated': true,
+      });
+
+      expect(fragment, isNotNull);
+      expect(fragment!.hasContentBoundaries, isTrue);
+      expect(fragment.contentStartSample, 4800);
+      expect(fragment.contentEndSample, 340800);
+      expect(fragment.detectorStartSample, 4600);
+      expect(fragment.detectorEndSample, 341000);
+      expect(fragment.truncated, isTrue);
+    });
+
+    test('drops missing or inconsistent sidecar boundaries', () {
+      final missing = AudioFragment.parse(<String, Object>{
+        'id': 'event_missing.wav',
+        'fileName': 'event_missing.wav',
+        'filePath': '/tmp/event_missing.wav',
+        'startedAtMillis': 1763240400000,
+        'durationMs': 21000,
+        'sizeBytes': 672044,
+      });
+      final inconsistent = AudioFragment.parse(<String, Object>{
+        'id': 'event_inconsistent.wav',
+        'fileName': 'event_inconsistent.wav',
+        'filePath': '/tmp/event_inconsistent.wav',
+        'startedAtMillis': 1763240400000,
+        'durationMs': 21000,
+        'sizeBytes': 672044,
+        'contentStartSample': 340800,
+        'contentEndSample': 4800,
+        'truncated': true,
+      });
+
+      expect(missing, isNotNull);
+      expect(missing!.hasContentBoundaries, isFalse);
+      expect(missing.truncated, isFalse);
+      expect(inconsistent, isNotNull);
+      expect(inconsistent!.hasContentBoundaries, isFalse);
+      expect(inconsistent.contentStartSample, isNull);
+      expect(inconsistent.contentEndSample, isNull);
+      expect(inconsistent.truncated, isFalse);
+    });
+
     test('rejects incomplete or impossible entries', () {
       expect(AudioFragment.parse(null), isNull);
       expect(AudioFragment.parse('string'), isNull);

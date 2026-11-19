@@ -45,6 +45,56 @@ class AudioFragmentWriterTest {
     }
 
     @Test
+    fun savesSidecarMetadataWithExactBoundaries() {
+        val listener = RecordingListener()
+        val directory = temporaryFolder.newFolder("metadata")
+        val writer = newWriter(directory, listener)
+
+        writer.open(1L, 1_000L, 100L, 150L)
+        assertTrue(writer.append(ShortArray(100) { 7 }, 0, 100))
+        writer.finish(2_000L, 200L, truncated = false, contentEndSample = 250L)
+        assertTrue(writer.stop(5_000))
+
+        val saved = listener.saved.single()
+        val metadata = requireNotNull(AudioFragmentMetadata.read(saved.file))
+
+        assertEquals(100L, metadata.startSample)
+        assertEquals(200L, metadata.endSample)
+        assertEquals(150L, metadata.contentStartSample)
+        assertEquals(250L, metadata.contentEndSample)
+        assertEquals(100L, metadata.samples)
+        assertEquals(config.sampleRate, metadata.sampleRateHz)
+        assertEquals(saved.file.length(), metadata.sizeBytes)
+        assertTrue(AudioFragmentMetadata.sidecarFile(saved.file).isFile)
+        assertTrue(listener.warnings.isEmpty())
+    }
+
+    @Test
+    fun openingReusedNameRemovesStaleSidecar() {
+        val directory = temporaryFolder.newFolder("metadata")
+        val listener = RecordingListener()
+        val first = newWriter(directory, listener)
+
+        first.open(1L, 1_000L, 0L, 0L)
+        assertTrue(first.append(ShortArray(100) { 1 }, 0, 100))
+        first.finish(2_000L, 100L, truncated = false, contentEndSample = 100L)
+        assertTrue(first.stop(5_000))
+
+        val savedFile = listener.saved.single().file
+        val sidecar = AudioFragmentMetadata.sidecarFile(savedFile)
+        assertTrue(sidecar.isFile)
+        assertTrue(savedFile.delete())
+
+        val second = newWriter(directory, RecordingListener())
+        second.open(2L, 1_000L, 0L, 0L)
+        second.abort()
+        assertTrue(second.stop(5_000))
+
+        assertFalse(sidecar.exists())
+        assertTrue(wavFiles(directory).isEmpty())
+    }
+
+    @Test
     fun openFailureIsReportedAndFragmentIsNotSaved() {
         val listener = RecordingListener()
         val directory = temporaryFolder.newFolder("fragments")

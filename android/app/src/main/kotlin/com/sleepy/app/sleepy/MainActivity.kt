@@ -5,8 +5,18 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import com.sleepy.app.sleepy.audio.AudioFragmentCatalog
+import com.sleepy.app.sleepy.audio.AudioFragmentMetadata
 import com.sleepy.app.sleepy.audio.FragmentPlayer
 import com.sleepy.app.sleepy.audio.RecordingStatusStore
+import com.sleepy.app.sleepy.dataset.DatasetDeletionResult
+import com.sleepy.app.sleepy.dataset.DatasetDevice
+import com.sleepy.app.sleepy.dataset.DatasetExportEngine
+import com.sleepy.app.sleepy.dataset.DatasetExportRequest
+import com.sleepy.app.sleepy.dataset.DatasetExportResult
+import com.sleepy.app.sleepy.dataset.DatasetPackageDeleter
+import com.sleepy.app.sleepy.dataset.DatasetParticipant
+import com.sleepy.app.sleepy.dataset.DatasetRecordingSource
+import com.sleepy.app.sleepy.dataset.DatasetSession
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -96,6 +106,14 @@ class MainActivity : FlutterActivity() {
 
                 "getPlaybackState" -> {
                     result.success(fragmentPlayer.snapshot())
+                }
+
+                "exportDataset" -> {
+                    exportDataset(call.arguments as? Map<*, *>, result)
+                }
+
+                "deleteDatasetParticipant" -> {
+                    deleteDatasetParticipant(call.arguments as? Map<*, *>, result)
                 }
 
                 else -> {
@@ -258,14 +276,24 @@ class MainActivity : FlutterActivity() {
                 AudioFragmentCatalog
                     .list(recordingsDirectory())
                     .map { fragment ->
-                        hashMapOf<String, Any>(
+                        val item = hashMapOf<String, Any>(
                             "id" to fragment.id,
                             "fileName" to fragment.fileName,
                             "filePath" to fragment.filePath,
                             "startedAtMillis" to fragment.startedAtMillis,
                             "durationMs" to fragment.durationMs,
-                            "sizeBytes" to fragment.sizeBytes
+                            "sizeBytes" to fragment.sizeBytes,
+                            "metadataAvailable" to (fragment.metadata != null)
                         )
+                        fragment.metadata?.let { metadata ->
+                            item["sampleRateHz"] = metadata.sampleRateHz
+                            item["startSample"] = metadata.startSample
+                            item["endSample"] = metadata.endSample
+                            item["contentStartSample"] = metadata.contentStartSample
+                            item["contentEndSample"] = metadata.contentEndSample
+                            item["truncated"] = metadata.truncated
+                        }
+                        item
                     }
             } catch (exception: Exception) {
                 postToUi {
@@ -329,6 +357,202 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun exportDataset(arguments: Map<*, *>?, result: MethodChannel.Result) {
+        val executor = storageExecutor
+
+        if (executor == null || destroyed) {
+            result.error("STORAGE_UNAVAILABLE", "Хранилище недоступно", null)
+            return
+        }
+
+        val request = try {
+            datasetExportRequest(arguments)
+        } catch (exception: IllegalArgumentException) {
+            result.error("INVALID_DATASET_REQUEST", exception.message, null)
+            return
+        }
+
+        executor.execute {
+            val payload = try {
+                datasetExportPayload(DatasetExportEngine().export(request))
+            } catch (exception: Exception) {
+                postToUi {
+                    result.error(
+                        "DATASET_EXPORT_ERROR",
+                        exception.message ?: "Не удалось экспортировать датасет",
+                        null,
+                    )
+                }
+                return@execute
+            }
+
+            postToUi { result.success(payload) }
+        }
+    }
+
+    private fun deleteDatasetParticipant(
+        arguments: Map<*, *>?,
+        result: MethodChannel.Result,
+    ) {
+        val executor = storageExecutor
+
+        if (executor == null || destroyed) {
+            result.error("STORAGE_UNAVAILABLE", "Хранилище недоступно", null)
+            return
+        }
+
+        val packageRoot = arguments?.optionalString("packageRootPath")
+        val participantId = arguments?.optionalString("participantId")
+        if (packageRoot.isNullOrBlank() || participantId.isNullOrBlank()) {
+            result.error(
+                "INVALID_DATASET_REQUEST",
+                "Нужны packageRootPath и participantId",
+                null,
+            )
+            return
+        }
+
+        executor.execute {
+            val payload = try {
+                datasetDeletionPayload(
+                    DatasetPackageDeleter().deleteParticipant(File(packageRoot), participantId),
+                )
+            } catch (exception: Exception) {
+                postToUi {
+                    result.error(
+                        "DATASET_DELETE_ERROR",
+                        exception.message ?: "Не удалось удалить участника",
+                        null,
+                    )
+                }
+                return@execute
+            }
+
+            postToUi { result.success(payload) }
+        }
+    }
+
+    private fun datasetExportRequest(arguments: Map<*, *>?): DatasetExportRequest {
+        if (arguments == null) {
+            throw IllegalArgumentException("Аргументы экспорта не переданы")
+        }
+        val participant = arguments.requiredMap("participant")
+        val device = arguments.requiredMap("device")
+        val session = arguments.requiredMap("session")
+        val recordings = arguments.requiredList("recordings").map { value ->
+            val recording = value as? Map<*, *>
+                ?: throw IllegalArgumentException("recordings должен содержать объекты")
+            val sourceFile = File(recording.requiredString("sourceFilePath"))
+            val metadata = AudioFragmentMetadata.read(sourceFile)
+            DatasetRecordingSource(
+                sourceFile = sourceFile,
+                sourceSessionId = recording.requiredString("sourceSessionId"),
+                fileStartedAtMillis = recording.optionalLong("fileStartedAtMillis")
+                    ?: metadata?.startedAtMillis
+                    ?: throw IllegalArgumentException("fileStartedAtMillis должен быть числом"),
+                contentStartSample = recording.optionalLong("contentStartSample")
+                    ?: metadata?.contentStartSample,
+                contentEndSample = recording.optionalLong("contentEndSample")
+                    ?: metadata?.contentEndSample,
+                detectorStartSample = recording.optionalLong("detectorStartSample")
+                    ?: metadata?.startSample,
+                detectorEndSample = recording.optionalLong("detectorEndSample")
+                    ?: metadata?.endSample,
+                peakDbfs = recording.optionalDouble("peakDbfs"),
+                averageDbfs = recording.optionalDouble("averageDbfs"),
+                isTruncated = recording.optionalBoolean("isTruncated")
+                    ?: metadata?.truncated
+                    ?: false,
+                privacyReviewStatus = recording.optionalString("privacyReviewStatus")
+                    ?: "not_reviewed",
+                privacyFlags = recording.stringList("privacyFlags").ifEmpty {
+                    listOf("unknown")
+                },
+                notes = recording.optionalString("notes") ?: "",
+            )
+        }
+
+        return DatasetExportRequest(
+            outputRoot = File(arguments.requiredString("outputRootPath")),
+            sourceRecordingsRoot = File(arguments.requiredString("sourceRecordingsRootPath")),
+            participant = DatasetParticipant(
+                participantId = participant.requiredString("participantId"),
+                createdAtMillis = participant.requiredLong("createdAtMillis"),
+                consentVersion = participant.requiredString("consentVersion"),
+                consentGrantedAtMillis = participant.requiredLong("consentGrantedAtMillis"),
+                consentStatus = participant.requiredString("consentStatus"),
+                consentScopes = participant.stringList("consentScopes"),
+                minorInvolved = participant.optionalBoolean("minorInvolved") ?: false,
+                guardianConsent = participant.optionalBoolean("guardianConsent") ?: false,
+                ageGroup = participant.optionalString("ageGroup"),
+                notes = participant.optionalString("notes") ?: "",
+            ),
+            device = DatasetDevice(
+                deviceId = device.requiredString("deviceId"),
+                createdAtMillis = device.requiredLong("createdAtMillis"),
+                manufacturer = device.requiredString("manufacturer"),
+                model = device.requiredString("model"),
+                osVersion = device.requiredString("osVersion"),
+                appVersion = device.requiredString("appVersion"),
+                microphonePosition = device.requiredString("microphonePosition"),
+                placementNotes = device.requiredString("placementNotes"),
+                calibrationStatus = device.requiredString("calibrationStatus"),
+                notes = device.optionalString("notes") ?: "",
+            ),
+            session = DatasetSession(
+                sourceSessionId = session.requiredString("sourceSessionId"),
+                startedAtMillis = session.requiredLong("startedAtMillis"),
+                endedAtMillis = session.optionalLong("endedAtMillis"),
+                timezone = session.requiredString("timezone"),
+                utcOffsetMinutes = session.requiredInt("utcOffsetMinutes"),
+                nightIndex = session.requiredInt("nightIndex"),
+                recordingMode = session.optionalString("recordingMode") ?: "event_fragments",
+                roomType = session.optionalString("roomType") ?: "unknown",
+                sessionStatus = session.optionalString("sessionStatus") ?: "completed",
+                householdAudioRisk = session.optionalString("householdAudioRisk"),
+                notes = session.optionalString("notes") ?: "",
+            ),
+            recordings = recordings,
+            exportedAtMillis = arguments.optionalLong("exportedAtMillis")
+                ?: System.currentTimeMillis(),
+        )
+    }
+
+    private fun datasetExportPayload(result: DatasetExportResult): Map<String, Any?> =
+        when (result) {
+            is DatasetExportResult.Success -> mapOf(
+                "ok" to true,
+                "packageRootPath" to result.packageRoot.path,
+                "manifestPath" to result.manifestFile.path,
+                "recordingCount" to result.recordingCount,
+                "warnings" to result.warnings,
+                "reusedExisting" to result.reusedExisting,
+            )
+            is DatasetExportResult.Failure -> mapOf(
+                "ok" to false,
+                "code" to result.code,
+                "message" to result.message,
+                "details" to result.details,
+            )
+        }
+
+    private fun datasetDeletionPayload(result: DatasetDeletionResult): Map<String, Any?> =
+        when (result) {
+            is DatasetDeletionResult.Success -> mapOf(
+                "ok" to true,
+                "deletedFiles" to result.deletedFiles,
+                "remainingFiles" to result.remainingFiles,
+                "integrityOk" to result.integrityOk,
+                "warnings" to result.warnings,
+            )
+            is DatasetDeletionResult.Failure -> mapOf(
+                "ok" to false,
+                "code" to result.code,
+                "message" to result.message,
+                "details" to result.details,
+            )
+        }
+
     private fun playFragment(path: String, result: MethodChannel.Result) {
         if (!isPlayableFragment(path)) {
             result.error(
@@ -358,6 +582,42 @@ class MainActivity : FlutterActivity() {
             false
         }
     }
+
+    private fun Map<*, *>.requiredMap(key: String): Map<*, *> =
+        this[key] as? Map<*, *>
+            ?: throw IllegalArgumentException("$key должен быть объектом")
+
+    private fun Map<*, *>.requiredList(key: String): List<*> =
+        this[key] as? List<*>
+            ?: throw IllegalArgumentException("$key должен быть массивом")
+
+    private fun Map<*, *>.requiredString(key: String): String =
+        optionalString(key)?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("$key должен быть непустой строкой")
+
+    private fun Map<*, *>.optionalString(key: String): String? =
+        this[key] as? String
+
+    private fun Map<*, *>.requiredLong(key: String): Long =
+        optionalLong(key) ?: throw IllegalArgumentException("$key должен быть числом")
+
+    private fun Map<*, *>.optionalLong(key: String): Long? =
+        (this[key] as? Number)?.toLong()
+
+    private fun Map<*, *>.requiredInt(key: String): Int =
+        (this[key] as? Number)?.toInt()
+            ?: throw IllegalArgumentException("$key должен быть числом")
+
+    private fun Map<*, *>.optionalDouble(key: String): Double? =
+        (this[key] as? Number)?.toDouble()
+
+    private fun Map<*, *>.optionalBoolean(key: String): Boolean? =
+        this[key] as? Boolean
+
+    private fun Map<*, *>.stringList(key: String): List<String> =
+        (this[key] as? List<*>)?.map { value ->
+            value as? String ?: throw IllegalArgumentException("$key должен содержать строки")
+        } ?: emptyList()
 
     private fun recordingsDirectory(): File {
         return File(filesDir, SleepRecordingService.RECORDINGS_DIRECTORY)

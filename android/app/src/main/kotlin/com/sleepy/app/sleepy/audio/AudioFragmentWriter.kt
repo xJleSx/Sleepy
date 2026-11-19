@@ -330,6 +330,7 @@ internal class AudioFragmentWriter(
         var path: File? = null
         try {
             path = nextFile(command.startedAtMillis)
+            AudioFragmentMetadata.delete(path)
             file = openFile(path)
             file.setLength(0L)
             file.write(headerBytes(0L))
@@ -349,7 +350,10 @@ internal class AudioFragmentWriter(
             } catch (_: IOException) {
                 // файл всё равно удаляем
             }
-            path?.delete()
+            path?.let {
+                AudioFragmentMetadata.delete(it)
+                it.delete()
+            }
             notifyFailure("Не удалось создать WAV-фрагмент: ${error.message}")
         } catch (_: SecurityException) {
             try {
@@ -357,7 +361,10 @@ internal class AudioFragmentWriter(
             } catch (_: IOException) {
                 // файл всё равно удаляем
             }
-            path?.delete()
+            path?.let {
+                AudioFragmentMetadata.delete(it)
+                it.delete()
+            }
             notifyFailure("Нет доступа к созданию WAV-фрагмента")
         }
     }
@@ -482,23 +489,28 @@ internal class AudioFragmentWriter(
         fragmentContentStartSample = 0L
 
         if (samples > 0L) {
+            val fragment = SavedAudioFragment(
+                file = path,
+                startedAtMillis = startedAtMillis,
+                endedAtMillis = command.endedAtMillis,
+                durationMs = samples * 1_000L / config.sampleRate,
+                samples = samples,
+                startSample = startSample,
+                endSample = command.endSample,
+                truncated = command.truncated,
+                contentStartSample = contentStartSample,
+                contentEndSample = contentStartSample + samples,
+            )
+            val metadataSaved = AudioFragmentMetadata.write(path, fragment, config.sampleRate)
+
             savedCount.incrementAndGet()
             lastSavedPath = path.absolutePath
-            listener?.onFragmentSaved(
-                SavedAudioFragment(
-                    file = path,
-                    startedAtMillis = startedAtMillis,
-                    endedAtMillis = command.endedAtMillis,
-                    durationMs = samples * 1_000L / config.sampleRate,
-                    samples = samples,
-                    startSample = startSample,
-                    endSample = command.endSample,
-                    truncated = command.truncated,
-                    contentStartSample = contentStartSample,
-                    contentEndSample = contentStartSample + samples,
-                ),
-            )
+            listener?.onFragmentSaved(fragment)
+            if (!metadataSaved) {
+                listener?.onWarning("Не удалось сохранить метаданные фрагмента: ${path.name}")
+            }
         } else {
+            AudioFragmentMetadata.delete(path)
             path.delete()
             listener?.onWarning("Пустой фрагмент удалён")
         }
@@ -542,10 +554,13 @@ internal class AudioFragmentWriter(
         fragmentStartMillis = 0L
         fragmentStartSample = 0L
         fragmentContentStartSample = 0L
-        try {
-            path?.delete()
-        } catch (_: SecurityException) {
-            // файл останется на диске, но фрагмент уже не учитывается
+        if (path != null) {
+            AudioFragmentMetadata.delete(path)
+            try {
+                path.delete()
+            } catch (_: SecurityException) {
+                // файл останется на диске, но фрагмент уже не учитывается
+            }
         }
     }
 
