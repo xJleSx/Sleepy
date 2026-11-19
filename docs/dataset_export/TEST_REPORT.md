@@ -65,8 +65,12 @@ flutter build apk --debug
 
 Результат: `C:\Users\JleS\sleepy\build\app\outputs\flutter-apk\app-debug.apk`, 173195554 байта. `apkanalyzer` подтвердил наличие пакета `com.sleepy.app.sleepy.dataset` в APK.
 
+## Устройство
+
+На `8LR8KN7HEAHUOZEY` (Android 15/API 35) установлен новый debug APK. Streamed install блокировался MIUI, установка выполнена через push install. После установки созданы 2 новых фрагмента; оба получили `.wav.meta` с корректными `samples`, `content_start_sample`, `content_end_sample` и `size_bytes`, каталог показал оба файла.
+
 ## Не выполнено
 
-- Runtime-проверка на реальном устройстве.
+- Runtime-экспорт пакета на устройстве: UI экспорта отсутствует.
 - Валидация на реальных Sleepy-записях: у существующих WAV нет точных content-границ.
 - Проверка event/annotation/split sidecar: они не входят в экспорт 0.1.
