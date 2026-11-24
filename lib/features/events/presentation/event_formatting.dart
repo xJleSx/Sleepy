@@ -50,6 +50,17 @@ String formatElapsed(Duration duration) {
   return '$hours:$minutes:$seconds';
 }
 
+/// Длительность сна без секунд: `48 мин`, `7 ч 12 мин`.
+String formatDurationLabel(Duration duration) {
+  final total = duration.isNegative ? 0 : duration.inMinutes;
+  final hours = total ~/ 60;
+  final minutes = total % 60;
+
+  if (hours == 0) return '$minutes мин';
+  if (minutes == 0) return '$hours ч';
+  return '$hours ч $minutes мин';
+}
+
 /// Размер файла: `980 Б`, `62 КБ`, `1.4 МБ`.
 String formatBytes(int bytes) {
   if (bytes < 1024) return '$bytes Б';

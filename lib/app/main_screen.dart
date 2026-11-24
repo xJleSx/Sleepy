@@ -1,4 +1,3 @@
-
 import 'package:material_ui/material_ui.dart';
 
 import 'theme/app_theme.dart';
@@ -68,7 +67,7 @@ class _MainScreenState extends State<MainScreen> {
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
             selectedIcon: Icon(Icons.settings),
-            label: 'Профиль',
+            label: 'Настройки',
           ),
         ],
       ),

@@ -40,6 +40,7 @@ class _EventsPageState extends State<EventsPage> with WidgetsBindingObserver {
   bool _statusBusy = false;
   bool _listBusy = false;
   bool _busy = false;
+  String? _deletingId;
 
   String? _loadError;
 
@@ -242,6 +243,66 @@ class _EventsPageState extends State<EventsPage> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _confirmDelete(AudioFragment fragment) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Удалить фрагмент?'),
+        content: const Text(
+          'WAV-файл будет удалён с устройства. Это действие нельзя отменить.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _deletingId = fragment.id;
+    });
+
+    try {
+      if (_player.snapshot.fragmentId == fragment.id) {
+        await _player.stop();
+      }
+      await _gateway.deleteFragment(fragment);
+
+      if (!mounted) return;
+      setState(() {
+        _fragments = _fragments
+            .where((item) => item.id != fragment.id)
+            .toList();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Фрагмент удалён')),
+      );
+    } on RecordingGatewayException catch (exception) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red.shade800,
+          content: Text(exception.message),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _deletingId = null;
+        });
+      }
+    }
+  }
+
   Duration _monitoringElapsed(RecordingStatus status) {
     final startedAt = status.startedAt;
     if (!status.isRecording || startedAt == null) return Duration.zero;
@@ -294,8 +355,9 @@ class _EventsPageState extends State<EventsPage> with WidgetsBindingObserver {
               for (final fragment in _fragments) _fragmentCard(fragment),
             const SizedBox(height: 12),
             const Text(
-              'Показаны только фрагменты новой системы событий. '
-              'Старые записи и настройки приложения не затрагиваются.',
+              'Детектор фиксирует акустические события. Отдельный '
+              'классификатор типов звуков пока недоступен, поэтому Sleepy '
+              'не называет каждое событие храпом.',
               style: TextStyle(color: Colors.white38, fontSize: 12),
             ),
           ],
@@ -313,7 +375,7 @@ class _EventsPageState extends State<EventsPage> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Аудиособытия',
+                'Звуки сна',
                 style: TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.w700,
@@ -321,7 +383,7 @@ class _EventsPageState extends State<EventsPage> with WidgetsBindingObserver {
               ),
               SizedBox(height: 4),
               Text(
-                'Фрагменты, сохранённые во время мониторинга',
+                'Обнаруженные события и сохранённые WAV-фрагменты',
                 style: TextStyle(color: Colors.white54),
               ),
             ],
@@ -607,7 +669,7 @@ class _EventsPageState extends State<EventsPage> with WidgetsBindingObserver {
           ),
           const SizedBox(height: 14),
           const Text(
-            'Пока нет аудиособытий',
+            'Пока нет звуковых событий',
             style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
           ),
           const SizedBox(height: 6),
@@ -682,6 +744,14 @@ class _EventsPageState extends State<EventsPage> with WidgetsBindingObserver {
                             fontSize: 13,
                           ),
                         ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Обнаружено событие · тип не определён',
+                          style: TextStyle(
+                            color: Colors.white38,
+                            fontSize: 11,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -690,6 +760,20 @@ class _EventsPageState extends State<EventsPage> with WidgetsBindingObserver {
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    IconButton(
+                      onPressed: _deletingId == fragment.id
+                          ? null
+                          : () => _confirmDelete(fragment),
+                      tooltip: 'Удалить фрагмент',
+                      icon: _deletingId == fragment.id
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.delete_outline, size: 20),
                     ),
                 ],
               ),

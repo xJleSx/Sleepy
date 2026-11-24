@@ -3,7 +3,12 @@ package com.sleepy.app.sleepy
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
+import com.sleepy.app.sleepy.alarm.AlarmScheduleResult
+import com.sleepy.app.sleepy.alarm.AlarmSpec
+import com.sleepy.app.sleepy.alarm.SleepAlarmScheduler
 import com.sleepy.app.sleepy.audio.AudioFragmentCatalog
 import com.sleepy.app.sleepy.audio.AudioFragmentMetadata
 import com.sleepy.app.sleepy.audio.FragmentPlayer
@@ -17,6 +22,7 @@ import com.sleepy.app.sleepy.dataset.DatasetPackageDeleter
 import com.sleepy.app.sleepy.dataset.DatasetParticipant
 import com.sleepy.app.sleepy.dataset.DatasetRecordingSource
 import com.sleepy.app.sleepy.dataset.DatasetSession
+import com.sleepy.app.sleepy.storage.SleepyLocalStore
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -29,12 +35,17 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "com.sleepy.app.sleepy/recording"
+        private const val STORAGE_CHANNEL = "com.sleepy.app.sleepy/storage"
+        private const val ALARM_CHANNEL = "com.sleepy.app.sleepy/alarm"
         private const val PERMISSION_REQUEST_CODE = 501
     }
 
     private var pendingPermissionResult: MethodChannel.Result? = null
 
     private val fragmentPlayer = FragmentPlayer()
+
+    private lateinit var localStore: SleepyLocalStore
+    private lateinit var alarmScheduler: SleepAlarmScheduler
 
     private var storageExecutor: ExecutorService? = null
 
@@ -47,6 +58,97 @@ class MainActivity : FlutterActivity() {
         storageExecutor?.shutdownNow()
         storageExecutor = Executors.newSingleThreadExecutor()
         destroyed = false
+
+        localStore = SleepyLocalStore(applicationContext)
+        alarmScheduler = SleepAlarmScheduler(applicationContext)
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            STORAGE_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "readText" -> {
+                    val key = call.argument<String>("key")
+                    if (key == null) {
+                        result.error("INVALID_STORAGE_KEY", "Не передан ключ", null)
+                    } else {
+                        runStorage(result) { localStore.readText(key) }
+                    }
+                }
+
+                "writeText" -> {
+                    val key = call.argument<String>("key")
+                    val value = call.argument<String>("value")
+                    if (key == null || value == null) {
+                        result.error(
+                            "INVALID_STORAGE_VALUE",
+                            "Не переданы ключ или значение",
+                            null
+                        )
+                    } else {
+                        runStorage(result) {
+                            localStore.writeText(key, value)
+                            true
+                        }
+                    }
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            ALARM_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            try {
+                when (call.method) {
+                    "canScheduleExactAlarms" -> {
+                        result.success(alarmScheduler.canScheduleExactAlarms())
+                    }
+
+                    "requestExactAlarmPermission" -> {
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                            result.success(false)
+                        } else {
+                            startActivity(
+                                Intent(
+                                    Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                    Uri.parse("package:$packageName"),
+                                ),
+                            )
+                            result.success(true)
+                        }
+                    }
+
+                    "scheduleAlarm" -> {
+                        val arguments = call.arguments as? Map<*, *>
+                        val spec = AlarmSpec.fromChannel(arguments)
+                        val triggerAtMillis = (arguments?.get("triggerAtMillis") as? Number)
+                            ?.toLong()
+                            ?: throw IllegalArgumentException("Не передано время будильника")
+                        result.success(
+                            alarmScheduler.schedule(spec, triggerAtMillis).toPayload()
+                        )
+                    }
+
+                    "cancelAlarm" -> {
+                        val alarmId = call.argument<String>("id")
+                            ?: throw IllegalArgumentException("Не передан id будильника")
+                        alarmScheduler.cancel(alarmId)
+                        result.success(true)
+                    }
+
+                    else -> result.notImplemented()
+                }
+            } catch (exception: Exception) {
+                result.error(
+                    "ALARM_CHANNEL_ERROR",
+                    exception.message ?: "Ошибка будильника",
+                    null
+                )
+            }
+        }
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -77,6 +179,15 @@ class MainActivity : FlutterActivity() {
 
                 "listDiagnosticFiles" -> {
                     listDiagnosticFiles(result)
+                }
+
+                "deleteFragment" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrBlank()) {
+                        result.error("INVALID_FRAGMENT_PATH", "Не передан путь", null)
+                    } else {
+                        deleteFragment(path, result)
+                    }
                 }
 
                 "playFragment" -> {
@@ -256,6 +367,30 @@ class MainActivity : FlutterActivity() {
                 exception.message ?: "Не удалось прочитать состояние записи",
                 null
             )
+        }
+    }
+
+    private fun deleteFragment(path: String, result: MethodChannel.Result) {
+        runStorage(result) {
+            val directory = recordingsDirectory().canonicalFile
+            val file = File(path).canonicalFile
+            if (file.parentFile != directory || !file.name.endsWith(".wav", true)) {
+                throw IllegalArgumentException("Фрагмент вне каталога записей")
+            }
+            if (!file.isFile) {
+                throw IllegalStateException("Фрагмент уже удалён")
+            }
+
+            try {
+                fragmentPlayer.stop()
+            } catch (_: Exception) {
+            }
+
+            AudioFragmentMetadata.sidecarFile(file).delete()
+            if (!file.delete()) {
+                throw IllegalStateException("Не удалось удалить WAV-фрагмент")
+            }
+            true
         }
     }
 
@@ -621,6 +756,41 @@ class MainActivity : FlutterActivity() {
 
     private fun recordingsDirectory(): File {
         return File(filesDir, SleepRecordingService.RECORDINGS_DIRECTORY)
+    }
+
+    private fun runStorage(
+        result: MethodChannel.Result,
+        block: () -> Any?,
+    ) {
+        val executor = storageExecutor
+        if (executor == null || destroyed) {
+            result.error("STORAGE_UNAVAILABLE", "Хранилище недоступно", null)
+            return
+        }
+
+        executor.execute {
+            try {
+                val value = block()
+                postToUi { result.success(value) }
+            } catch (exception: Exception) {
+                postToUi {
+                    result.error(
+                        "STORAGE_ERROR",
+                        exception.message ?: "Ошибка локального хранилища",
+                        null,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun AlarmScheduleResult.toPayload(): Map<String, Any?> {
+        return mapOf(
+            "scheduled" to scheduled,
+            "exact" to exact,
+            "triggerAtMillis" to triggerAtMillis,
+            "message" to message,
+        )
     }
 
     private fun postToUi(block: () -> Unit) {

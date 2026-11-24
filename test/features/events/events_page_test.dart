@@ -44,6 +44,14 @@ class FakeGateway implements RecordingGateway {
     if (error != null) throw error!;
     return const <DiagnosticAudioFile>[];
   }
+
+  @override
+  Future<void> deleteFragment(AudioFragment fragment) async {
+    if (error != null) throw error!;
+    fragments = fragments
+        .where((item) => item.id != fragment.id)
+        .toList();
+  }
 }
 
 class FakePlayer extends AudioPlaybackController {
@@ -183,8 +191,8 @@ void main() {
 
     await tester.pump();
 
-    expect(find.text('Аудиособытия'), findsOneWidget);
-    expect(find.text('Пока нет аудиособытий'), findsOneWidget);
+    expect(find.text('Звуки сна'), findsOneWidget);
+    expect(find.text('Пока нет звуковых событий'), findsOneWidget);
   });
 
   testWidgets('keeps file and event counters independent', (tester) async {
@@ -197,7 +205,7 @@ void main() {
 
     expect(find.text('0'), findsOneWidget);
     expect(find.text('5'), findsOneWidget);
-    expect(find.text('Пока нет аудиособытий'), findsOneWidget);
+    expect(find.text('Пока нет звуковых событий'), findsOneWidget);
   });
 
   testWidgets('lists saved fragments with time, duration and size', (
@@ -224,7 +232,7 @@ void main() {
     expect(find.textContaining('15.11.2026 · 23:00:00'), findsOneWidget);
     expect(find.textContaining('14.11.2026 · 22:00:00'), findsOneWidget);
     expect(find.textContaining('0:21'), findsOneWidget);
-    expect(find.text('Пока нет аудиособытий'), findsNothing);
+    expect(find.text('Пока нет звуковых событий'), findsNothing);
   });
 
   testWidgets('selecting a fragment opens the player and switches on tap', (
@@ -331,7 +339,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('Пока нет аудиособытий'), findsOneWidget);
+    expect(find.text('Пока нет звуковых событий'), findsOneWidget);
   });
 
   testWidgets('stops playback when the selected file disappears', (
@@ -363,7 +371,7 @@ void main() {
     await tester.pump();
 
     expect(player.calls, contains('stop'));
-    expect(find.text('Пока нет аудиособытий'), findsOneWidget);
+    expect(find.text('Пока нет звуковых событий'), findsOneWidget);
   });
 
   testWidgets('reloads the list when monitoring stops', (tester) async {

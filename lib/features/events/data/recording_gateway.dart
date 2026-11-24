@@ -23,6 +23,66 @@ abstract class RecordingGateway {
   Future<List<AudioFragment>> fetchFragments();
 
   Future<List<DiagnosticAudioFile>> fetchDiagnosticFiles();
+
+  Future<void> deleteFragment(AudioFragment fragment);
+}
+
+abstract class RecordingControlGateway {
+  Future<bool> requestMicrophonePermission();
+
+  Future<void> startRecording();
+
+  Future<void> stopRecording();
+}
+
+class ChannelRecordingControlGateway implements RecordingControlGateway {
+  ChannelRecordingControlGateway({MethodChannel? channel})
+    : _channel =
+          channel ?? const MethodChannel('com.sleepy.app.sleepy/recording');
+
+  final MethodChannel _channel;
+
+  @override
+  Future<bool> requestMicrophonePermission() async {
+    try {
+      return await _channel.invokeMethod<bool>(
+            'requestMicrophonePermission',
+          ) ??
+          false;
+    } on MissingPluginException {
+      throw const RecordingGatewayException('Канал записи недоступен');
+    } on PlatformException catch (exception) {
+      throw RecordingGatewayException(
+        exception.message ?? 'Не удалось запросить доступ к микрофону',
+      );
+    }
+  }
+
+  @override
+  Future<void> startRecording() async {
+    try {
+      await _channel.invokeMethod<bool>('startRecording');
+    } on MissingPluginException {
+      throw const RecordingGatewayException('Канал записи недоступен');
+    } on PlatformException catch (exception) {
+      throw RecordingGatewayException(
+        exception.message ?? 'Не удалось запустить запись',
+      );
+    }
+  }
+
+  @override
+  Future<void> stopRecording() async {
+    try {
+      await _channel.invokeMethod<bool>('stopRecording');
+    } on MissingPluginException {
+      throw const RecordingGatewayException('Канал записи недоступен');
+    } on PlatformException catch (exception) {
+      throw RecordingGatewayException(
+        exception.message ?? 'Не удалось остановить запись',
+      );
+    }
+  }
 }
 
 /// Реализация поверх существующего канала записи.
@@ -72,6 +132,25 @@ class ChannelRecordingGateway implements RecordingGateway {
     } on PlatformException catch (exception) {
       throw RecordingGatewayException(
         exception.message ?? 'Не удалось получить список фрагментов',
+      );
+    }
+  }
+
+  @override
+  Future<void> deleteFragment(AudioFragment fragment) async {
+    try {
+      final deleted = await _channel.invokeMethod<bool>(
+        'deleteFragment',
+        <String, Object>{'path': fragment.filePath},
+      );
+      if (deleted != true) {
+        throw const RecordingGatewayException('Фрагмент не был удалён');
+      }
+    } on MissingPluginException {
+      throw const RecordingGatewayException('Канал записи недоступен');
+    } on PlatformException catch (exception) {
+      throw RecordingGatewayException(
+        exception.message ?? 'Не удалось удалить фрагмент',
       );
     }
   }

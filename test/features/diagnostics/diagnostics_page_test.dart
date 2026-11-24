@@ -42,6 +42,9 @@ class FakeGateway implements RecordingGateway {
   Future<List<AudioFragment>> fetchFragments() async {
     return const <AudioFragment>[];
   }
+
+  @override
+  Future<void> deleteFragment(AudioFragment fragment) async {}
 }
 
 void main() {
