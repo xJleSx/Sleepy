@@ -89,8 +89,8 @@ class AudioCaptureSessionTest {
 
         val fragment = files.single()
         assertTrue(fragment.name.startsWith("event_"))
-        // pre-roll 8 с + событие 1 с + post-roll 8 с = 17 с.
-        assertEquals(44L + 17L * config.sampleRate * config.bytesPerSample, fragment.length())
+        // pre-roll 4 с + событие 1 с + post-roll 4 с = 9 с.
+        assertEquals(44L + 9L * config.sampleRate * config.bytesPerSample, fragment.length())
 
         assertFalse(session.isRunning)
         assertEquals(1, source.releaseCalls)

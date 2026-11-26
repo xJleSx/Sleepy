@@ -745,12 +745,30 @@ class _EventsPageState extends State<EventsPage> with WidgetsBindingObserver {
                           ),
                         ),
                         const SizedBox(height: 6),
-                        const Text(
-                          'Обнаружено событие · тип не определён',
-                          style: TextStyle(
-                            color: Colors.white38,
-                            fontSize: 11,
-                          ),
+                        Row(
+                          children: [
+                            if (fragment.isWeakCandidate) ...[
+                              const Icon(
+                                Icons.help_outline,
+                                size: 13,
+                                color: Colors.amber,
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            Flexible(
+                              child: Text(
+                                fragment.isWeakCandidate
+                                    ? 'Слабый кандидат · требует проверки'
+                                    : 'Обнаружено событие · тип не определён',
+                                style: TextStyle(
+                                  color: fragment.isWeakCandidate
+                                      ? Colors.amber
+                                      : Colors.white38,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

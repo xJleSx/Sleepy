@@ -33,6 +33,8 @@ abstract class RecordingControlGateway {
   Future<void> startRecording();
 
   Future<void> stopRecording();
+
+  Future<void> setRecordingProfile(String profileId) async {}
 }
 
 class ChannelRecordingControlGateway implements RecordingControlGateway {
@@ -80,6 +82,22 @@ class ChannelRecordingControlGateway implements RecordingControlGateway {
     } on PlatformException catch (exception) {
       throw RecordingGatewayException(
         exception.message ?? 'Не удалось остановить запись',
+      );
+    }
+  }
+
+  @override
+  Future<void> setRecordingProfile(String profileId) async {
+    try {
+      await _channel.invokeMethod<String>(
+        'setRecordingProfile',
+        <String, Object>{'profile': profileId},
+      );
+    } on MissingPluginException {
+      throw const RecordingGatewayException('Канал записи недоступен');
+    } on PlatformException catch (exception) {
+      throw RecordingGatewayException(
+        exception.message ?? 'Не удалось сохранить профиль записи',
       );
     }
   }

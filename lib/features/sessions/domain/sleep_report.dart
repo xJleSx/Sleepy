@@ -7,11 +7,15 @@ class SleepEventBucket {
     required this.start,
     required this.end,
     required this.count,
+    this.averageDbfs,
   });
 
   final DateTime start;
   final DateTime end;
   final int count;
+  final double? averageDbfs;
+
+  bool get hasNoiseData => averageDbfs != null;
 }
 
 class SleepComparison {

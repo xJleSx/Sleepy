@@ -148,6 +148,12 @@ void main() {
         'writerFailedCount': 1,
         'lastWriterError': 'Не удалось создать WAV-фрагмент',
         'lastFragmentPath': '/recordings/event_a.wav',
+        'recordingProfile': 'HIGH',
+        'diagnosticProfile': 'VERY_HIGH',
+        'weakCandidateCount': 6,
+        'weakSavedCount': 4,
+        'weakRejectedCount': 2,
+        'lastWeakRejection': 'cooldown',
       };
     });
 
@@ -169,6 +175,44 @@ void main() {
     expect(status.writerFailedCount, 1);
     expect(status.lastWriterError, 'Не удалось создать WAV-фрагмент');
     expect(status.lastFragmentPath, '/recordings/event_a.wav');
+    expect(status.recordingProfile, 'HIGH');
+    expect(status.diagnosticProfile, 'VERY_HIGH');
+    expect(status.weakCandidateCount, 6);
+    expect(status.weakSavedCount, 4);
+    expect(status.weakRejectedCount, 2);
+    expect(status.lastWeakRejection, 'cooldown');
+  });
+
+  test('sends the selected recording profile to the platform', () async {
+    mockHandler((call) async {
+      expect(call.method, 'setRecordingProfile');
+      expect(call.arguments, <String, Object>{'profile': 'VERY_HIGH'});
+      return null;
+    });
+
+    await ChannelRecordingControlGateway(channel: channel)
+        .setRecordingProfile('VERY_HIGH');
+  });
+
+  test('wraps profile persistence errors into a readable exception', () async {
+    mockHandler((call) async {
+      throw PlatformException(
+        code: 'SET_PROFILE_ERROR',
+        message: 'Не удалось сохранить профиль',
+      );
+    });
+
+    expect(
+      ChannelRecordingControlGateway(channel: channel)
+          .setRecordingProfile('HIGH'),
+      throwsA(
+        isA<RecordingGatewayException>().having(
+          (error) => error.message,
+          'message',
+          'Не удалось сохранить профиль',
+        ),
+      ),
+    );
   });
 
   test('wraps platform errors into a readable exception', () async {

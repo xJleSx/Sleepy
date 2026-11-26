@@ -266,6 +266,12 @@ class _RecordingPageState extends State<RecordingPage> {
           ],
         ),
         const SizedBox(height: AppSpacing.md),
+        MetricTile(
+          icon: Icons.tune,
+          label: 'профиль чувствительности',
+          value: _services!.monitor.profile.label,
+        ),
+        const SizedBox(height: AppSpacing.md),
         Row(
           children: [
             Expanded(

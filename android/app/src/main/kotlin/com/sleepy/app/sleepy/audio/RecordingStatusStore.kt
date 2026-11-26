@@ -61,6 +61,11 @@ class RecordingStatusStore internal constructor(
             .putLong(KEY_WRITER_SAVED_COUNT, 0L)
             .putLong(KEY_WRITER_FAILED_COUNT, 0L)
             .putString(KEY_LAST_WRITER_ERROR, "")
+            .putString(KEY_DIAGNOSTIC_PROFILE, selectedProfile().storageValue)
+            .putLong(KEY_WEAK_CANDIDATE_COUNT, 0L)
+            .putLong(KEY_WEAK_SAVED_COUNT, 0L)
+            .putLong(KEY_WEAK_REJECTED_COUNT, 0L)
+            .putString(KEY_LAST_WEAK_REJECTION, "")
 
         if (savedFragmentsOnDisk >= 0) {
             editor.putInt(KEY_FRAGMENT_COUNT, savedFragmentsOnDisk)
@@ -173,6 +178,16 @@ class RecordingStatusStore internal constructor(
             .apply()
     }
 
+    fun selectedProfile(): RecordingProfile = RecordingProfile.fromStorage(
+        preferences.getString(KEY_RECORDING_PROFILE, null),
+    )
+
+    fun setRecordingProfile(profile: RecordingProfile) {
+        preferences.edit()
+            .putString(KEY_RECORDING_PROFILE, profile.storageValue)
+            .apply()
+    }
+
     override fun touchHeartbeat() {
         preferences.edit()
             .putLong(KEY_HEARTBEAT_AT, System.currentTimeMillis())
@@ -194,6 +209,11 @@ class RecordingStatusStore internal constructor(
             .putLong(KEY_WRITER_FAILED_COUNT, diagnostics.writerFailedCount)
             .putString(KEY_LAST_WRITER_ERROR, diagnostics.lastWriterError)
             .putString(KEY_LAST_FRAGMENT_PATH, diagnostics.lastFragmentPath)
+            .putString(KEY_DIAGNOSTIC_PROFILE, diagnostics.profileId)
+            .putLong(KEY_WEAK_CANDIDATE_COUNT, diagnostics.weakCandidateCount)
+            .putLong(KEY_WEAK_SAVED_COUNT, diagnostics.weakSavedCount)
+            .putLong(KEY_WEAK_REJECTED_COUNT, diagnostics.weakRejectedCount)
+            .putString(KEY_LAST_WEAK_REJECTION, diagnostics.lastWeakRejection)
             .apply()
     }
 
@@ -256,6 +276,15 @@ class RecordingStatusStore internal constructor(
             "writerFailedCount" to preferences.getLong(KEY_WRITER_FAILED_COUNT, 0L),
             "lastWriterError" to
                 preferences.getString(KEY_LAST_WRITER_ERROR, "").orEmpty(),
+            "recordingProfile" to selectedProfile().storageValue,
+            "diagnosticProfile" to preferences
+                .getString(KEY_DIAGNOSTIC_PROFILE, selectedProfile().storageValue)
+                .orEmpty(),
+            "weakCandidateCount" to preferences.getLong(KEY_WEAK_CANDIDATE_COUNT, 0L),
+            "weakSavedCount" to preferences.getLong(KEY_WEAK_SAVED_COUNT, 0L),
+            "weakRejectedCount" to preferences.getLong(KEY_WEAK_REJECTED_COUNT, 0L),
+            "lastWeakRejection" to
+                preferences.getString(KEY_LAST_WEAK_REJECTION, "").orEmpty(),
         )
     }
 
@@ -288,6 +317,12 @@ class RecordingStatusStore internal constructor(
         const val KEY_WRITER_SAVED_COUNT = "writer_saved_count"
         const val KEY_WRITER_FAILED_COUNT = "writer_failed_count"
         const val KEY_LAST_WRITER_ERROR = "last_writer_error"
+        const val KEY_RECORDING_PROFILE = "recording_profile"
+        const val KEY_DIAGNOSTIC_PROFILE = "diagnostic_profile"
+        const val KEY_WEAK_CANDIDATE_COUNT = "weak_candidate_count"
+        const val KEY_WEAK_SAVED_COUNT = "weak_saved_count"
+        const val KEY_WEAK_REJECTED_COUNT = "weak_rejected_count"
+        const val KEY_LAST_WEAK_REJECTION = "last_weak_rejection"
 
         /**
          * Если служба не обновляла heartbeat дольше этого времени,

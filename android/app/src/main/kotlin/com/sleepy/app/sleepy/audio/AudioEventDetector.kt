@@ -21,6 +21,8 @@ data class DetectedAudioEvent(
     val startSample: Long,
     /** Абсолютный индекс сэмпла сразу после последнего громкого. */
     val endSample: Long,
+    val eventClass: String = RecordingEventMetadata.EVENT_CLASS_NORMAL,
+    val triggerReason: String = "",
 )
 
 /**
@@ -60,6 +62,14 @@ class AudioEventDetector(
         fun onEventStarted(startedAtMillis: Long, startSample: Long) {}
 
         fun onEventFinished(event: DetectedAudioEvent) {}
+
+        /**
+         * Слабое событие, которое не дотянуло до обычного порога.
+         *
+         * Это кандидат на проверку, а не подтверждённый тип звука. Владелец
+         * должен сохранить его отдельно и пометить как `WEAK_CANDIDATE`.
+         */
+        fun onWeakCandidate(event: DetectedAudioEvent) {}
     }
 
     enum class DetectorState { WARMING_UP, QUIET, CANDIDATE, ACTIVE }
@@ -100,6 +110,20 @@ class AudioEventDetector(
     private var quietSamples = 0L
     private var eventIsContinuation = false
 
+    private var weakCandidateCount = 0L
+    private var weakEmittedCount = 0L
+    private var weakRejectedCount = 0L
+    private var lastWeakRejection = ""
+    private var weakCandidateStartSample = -1L
+    private var weakCandidateStartMillis = 0L
+    private var weakCandidateSamples = 0L
+    private var weakCandidateSumSquares = 0.0
+    private var weakCandidatePeakDbfs = MIN_DBFS
+    private var lastWeakLoudSample = 0L
+    private var lastWeakLoudMillis = 0L
+    private var weakQuietSamples = 0L
+    private var weakBlockedUntilQuiet = false
+
     /** Текущая оценка фонового шума в dBFS. */
     val noiseFloorDbfs: Double
         get() = noiseFloor
@@ -119,6 +143,21 @@ class AudioEventDetector(
     /** Сколько кандидатов подтвердилось в события за сессию. */
     val confirmedEventCountTotal: Long
         get() = confirmedEventCount
+
+    /** Сколько слабых кандидатов началось за сессию. */
+    val weakCandidateCountTotal: Long
+        get() = weakCandidateCount
+
+    /** Сколько слабых кандидатов удалось завершить и отдать владельцу. */
+    val weakEmittedCountTotal: Long
+        get() = weakEmittedCount
+
+    /** Сколько слабых кандидатов отброшено как слишком короткие/длинные. */
+    val weakRejectedCountTotal: Long
+        get() = weakRejectedCount
+
+    val lastWeakRejectionReason: String
+        get() = lastWeakRejection
 
     val isEventActive: Boolean
         get() = state == DetectorState.ACTIVE
@@ -207,10 +246,21 @@ class AudioEventDetector(
         when (state) {
             DetectorState.QUIET -> {
                 if (chunkDbfs > triggerDbfs) {
+                    discardWeakCandidate()
                     startCandidate(chunkStartMillis, sumSquares, chunkPeakDbfs, length)
                     if (candidateSamples >= config.minEventSamples) {
                         confirmEvent(chunkEndSample, chunkEndMillis)
                     }
+                } else if (config.weakEnabled) {
+                    processWeak(
+                        chunkDbfs = chunkDbfs,
+                        sumSquares = sumSquares,
+                        chunkPeakDbfs = chunkPeakDbfs,
+                        length = length,
+                        chunkStartMillis = chunkStartMillis,
+                        chunkEndSample = chunkEndSample,
+                        chunkEndMillis = chunkEndMillis,
+                    )
                 } else {
                     updateNoiseFloor(chunkDbfs)
                 }
@@ -273,10 +323,14 @@ class AudioEventDetector(
         if (state == DetectorState.CANDIDATE) {
             state = DetectorState.QUIET
             clearCandidate()
+            discardWeakCandidate()
             return null
         }
 
-        if (state != DetectorState.ACTIVE) return null
+        if (state != DetectorState.ACTIVE) {
+            finishWeakCandidate(truncated = false)
+            return null
+        }
 
         return finishEvent(truncated = false)
     }
@@ -296,8 +350,14 @@ class AudioEventDetector(
         quietSamples = 0L
         candidateCount = 0L
         confirmedEventCount = 0L
+        weakCandidateCount = 0L
+        weakEmittedCount = 0L
+        weakRejectedCount = 0L
+        lastWeakRejection = ""
         clearCandidate()
         clearEvent()
+        clearWeakCandidate()
+        weakBlockedUntilQuiet = false
     }
 
     private fun startCandidate(
@@ -394,6 +454,133 @@ class AudioEventDetector(
         listener?.onEventFinished(event)
 
         return event
+    }
+
+    private fun processWeak(
+        chunkDbfs: Double,
+        sumSquares: Double,
+        chunkPeakDbfs: Double,
+        length: Int,
+        chunkStartMillis: Long,
+        chunkEndSample: Long,
+        chunkEndMillis: Long,
+    ) {
+        val trigger = maxOf(
+            noiseFloor + config.weakThresholdAboveNoiseDb,
+            config.weakAbsoluteFloorDbfs,
+        )
+        val release = trigger - config.hysteresisDb
+
+        if (weakBlockedUntilQuiet) {
+            if (chunkDbfs <= release) {
+                weakBlockedUntilQuiet = false
+                updateNoiseFloor(chunkDbfs)
+            }
+            return
+        }
+
+        if (weakCandidateStartSample < 0L) {
+            if (chunkDbfs > trigger) {
+                weakCandidateStartSample = totalSamples
+                weakCandidateStartMillis = chunkStartMillis
+                weakCandidateSamples = length.toLong()
+                weakCandidateSumSquares = sumSquares
+                weakCandidatePeakDbfs = chunkPeakDbfs
+                lastWeakLoudSample = chunkEndSample
+                lastWeakLoudMillis = chunkEndMillis
+                weakQuietSamples = 0L
+                weakCandidateCount += 1
+            } else {
+                updateNoiseFloor(chunkDbfs)
+            }
+            return
+        }
+
+        if (chunkDbfs >= release) {
+            weakCandidateSamples += length
+            weakCandidateSumSquares += sumSquares
+            if (chunkPeakDbfs > weakCandidatePeakDbfs) {
+                weakCandidatePeakDbfs = chunkPeakDbfs
+            }
+            lastWeakLoudSample = chunkEndSample
+            lastWeakLoudMillis = chunkEndMillis
+            weakQuietSamples = 0L
+
+            if (weakCandidateSamples >= config.weakMaxEventSamples) {
+                finishWeakCandidate(truncated = true)
+                weakBlockedUntilQuiet = true
+            }
+        } else {
+            weakQuietSamples += length
+            if (weakQuietSamples > config.weakMergeGapSamples) {
+                finishWeakCandidate(truncated = false)
+            }
+        }
+    }
+
+    private fun finishWeakCandidate(truncated: Boolean) {
+        if (weakCandidateStartSample < 0L) return
+
+        val durationSamples = lastWeakLoudSample - weakCandidateStartSample
+        val loudSamples = weakCandidateSamples
+        val startSample = weakCandidateStartSample
+        val startMillis = weakCandidateStartMillis
+        val endSample = lastWeakLoudSample
+        val endMillis = lastWeakLoudMillis
+        val peakDbfs = weakCandidatePeakDbfs
+        val sumSquares = weakCandidateSumSquares
+
+        clearWeakCandidate()
+
+        if (durationSamples < config.weakMinEventSamples || loudSamples <= 0L) {
+            weakRejectedCount += 1
+            lastWeakRejection = "weak-too-short"
+            return
+        }
+
+        val meanSquare = weakCandidateMeanSquare(sumSquares, loudSamples)
+        val averageDbfs = if (meanSquare <= 0.0) {
+            MIN_DBFS
+        } else {
+            maxOf(MIN_DBFS, 10.0 * log10(meanSquare))
+        }
+
+        weakEmittedCount += 1
+        listener?.onWeakCandidate(
+            DetectedAudioEvent(
+                startedAtMillis = startMillis,
+                endedAtMillis = endMillis,
+                durationMs = durationSamples * 1_000L / config.sampleRate,
+                peakDbfs = peakDbfs,
+                averageDbfs = averageDbfs,
+                truncated = truncated,
+                startSample = startSample,
+                endSample = endSample,
+                eventClass = RecordingEventMetadata.EVENT_CLASS_WEAK,
+                triggerReason = "weak-threshold",
+            ),
+        )
+    }
+
+    private fun weakCandidateMeanSquare(sumSquares: Double, loudSamples: Long): Double {
+        if (loudSamples <= 0L) return 0.0
+        return sumSquares / (loudSamples.toDouble() * FULL_SCALE_SQUARE)
+    }
+
+    private fun discardWeakCandidate() {
+        clearWeakCandidate()
+        weakBlockedUntilQuiet = false
+    }
+
+    private fun clearWeakCandidate() {
+        weakCandidateStartSample = -1L
+        weakCandidateStartMillis = 0L
+        weakCandidateSamples = 0L
+        weakCandidateSumSquares = 0.0
+        weakCandidatePeakDbfs = MIN_DBFS
+        lastWeakLoudSample = 0L
+        lastWeakLoudMillis = 0L
+        weakQuietSamples = 0L
     }
 
     private fun updateNoiseFloor(chunkDbfs: Double) {

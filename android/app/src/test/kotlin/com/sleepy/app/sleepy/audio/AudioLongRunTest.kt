@@ -129,7 +129,7 @@ class AudioLongRunTest {
                     warnings += message
                 }
             },
-            writerQueueBlocks = 1_024,
+            writerQueueBlocks = 4_096,
         )
 
         val quiet = chunkFor(loud = false)
@@ -184,9 +184,9 @@ class AudioLongRunTest {
                 WavFileValidator.Status.VALID,
                 validation.status,
             )
-            assertEquals(18_000L, validation.info!!.durationMs)
+            assertEquals(10_000L, validation.info!!.durationMs)
             assertEquals(fragment.samples * 2L, validation.info.dataBytes)
-            assertEquals(18_000L, fragment.durationMs)
+            assertEquals(10_000L, fragment.durationMs)
             assertExpectedSamples(fragment)
         }
 

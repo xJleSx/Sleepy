@@ -5,6 +5,7 @@ import '../../../app/sleepy_services.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../shared/widgets/app_components.dart';
 import '../../diagnostics/presentation/diagnostics_page.dart';
+import '../../recording/domain/recording_profile.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -47,6 +48,38 @@ class _SettingsPageState extends State<SettingsPage> {
         const ScreenTitle(
           title: 'Настройки',
           subtitle: 'Состояние приложения, данные и диагностика',
+        ),
+        const SizedBox(height: AppSpacing.xxl),
+        const SectionLabel('Чувствительность детектора'),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              RadioGroup<String>(
+                groupValue: _services?.monitor.profile.id,
+                onChanged: (value) {
+                  if (_services?.monitor.isRecording != false) return;
+                  if (value == null) return;
+                  final profile = RecordingProfile.values.firstWhere(
+                    (profile) => profile.id == value,
+                  );
+                  _selectProfile(profile);
+                },
+                child: Column(
+                  children: [
+                    for (final profile in RecordingProfile.values)
+                      _profileOption(profile),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              const Text(
+                'Слабые кандидаты сохраняются отдельно, требуют проверки и '
+                'никогда не получают автоматическую метку «храп».',
+                style: TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: AppSpacing.xxl),
         const SectionLabel('Мониторинг'),
@@ -172,12 +205,76 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: AppSpacing.xxl),
         const Text(
-          'Sleepy 0.5 · локальная разработческая сборка',
+          'Sleepy 0.7.1 · локальная разработческая сборка',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.white24, fontSize: 11),
         ),
       ],
     );
+  }
+
+  Widget _profileOption(RecordingProfile profile) {
+    final monitor = _services?.monitor;
+    final selected = monitor?.profile == profile;
+    final enabled = monitor != null && !monitor.isRecording;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: enabled ? () => _selectProfile(profile) : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Radio<String>(
+              value: profile.id,
+              enabled: enabled,
+              activeColor: accent,
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    profile.label,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: selected ? accent : Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    profile.description,
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _selectProfile(RecordingProfile profile) async {
+    try {
+      await _services?.monitor.setProfile(profile);
+    } catch (exception) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: danger,
+          content: Text(
+            exception.toString().replaceFirst('SleepMonitorException: ', ''),
+          ),
+        ),
+      );
+    }
   }
 
   Widget _row(String label, String value, [Color color = Colors.white]) {

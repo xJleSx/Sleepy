@@ -64,6 +64,10 @@ internal class AudioFragmentWriter(
             val startedAtMillis: Long,
             val startSample: Long,
             val contentStartSample: Long,
+            val profileId: String,
+            val eventClass: String,
+            val triggerReasons: String,
+            val thresholdSummary: String,
         ) : Command
 
         class Data(val block: PcmBlock, val count: Int) : Command
@@ -73,6 +77,8 @@ internal class AudioFragmentWriter(
             val endSample: Long,
             val truncated: Boolean,
             val contentEndSample: Long? = null,
+            val peakDbfs: Double? = null,
+            val averageDbfs: Double? = null,
         ) : Command
 
         object Abort : Command
@@ -107,6 +113,10 @@ internal class AudioFragmentWriter(
     private var fragmentStartMillis = 0L
     private var fragmentStartSample = 0L
     private var fragmentContentStartSample = 0L
+    private var fragmentProfileId = RecordingProfile.STANDARD.storageValue
+    private var fragmentEventClass = RecordingEventMetadata.EVENT_CLASS_NORMAL
+    private var fragmentTriggerReasons = ""
+    private var fragmentThresholdSummary = ""
     private var fragmentGeneration = 0L
     private var failureNotified = false
     private val syncSamples = config.sampleRate.toLong() * SYNC_INTERVAL_SECONDS
@@ -169,12 +179,25 @@ internal class AudioFragmentWriter(
         startedAtMillis: Long,
         startSample: Long,
         contentStartSample: Long,
+        profileId: String = RecordingProfile.STANDARD.storageValue,
+        eventClass: String = RecordingEventMetadata.EVENT_CLASS_NORMAL,
+        triggerReasons: String = "",
+        thresholdSummary: String = "",
     ) {
         if (stopRequested) return
 
         discardPending()
         commands.put(
-            Command.Open(generation, startedAtMillis, startSample, contentStartSample),
+            Command.Open(
+                generation = generation,
+                startedAtMillis = startedAtMillis,
+                startSample = startSample,
+                contentStartSample = contentStartSample,
+                profileId = profileId,
+                eventClass = eventClass,
+                triggerReasons = triggerReasons,
+                thresholdSummary = thresholdSummary,
+            ),
         )
     }
 
@@ -213,11 +236,22 @@ internal class AudioFragmentWriter(
         endSample: Long,
         truncated: Boolean,
         contentEndSample: Long? = null,
+        peakDbfs: Double? = null,
+        averageDbfs: Double? = null,
     ) {
         if (stopRequested) return
 
         enqueuePending()
-        commands.put(Command.Finish(endedAtMillis, endSample, truncated, contentEndSample))
+        commands.put(
+            Command.Finish(
+                endedAtMillis = endedAtMillis,
+                endSample = endSample,
+                truncated = truncated,
+                contentEndSample = contentEndSample,
+                peakDbfs = peakDbfs,
+                averageDbfs = averageDbfs,
+            ),
+        )
     }
 
     /** Удаляет текущий фрагмент вместе с уже записанным файлом. */
@@ -344,6 +378,10 @@ internal class AudioFragmentWriter(
             fragmentStartMillis = command.startedAtMillis
             fragmentStartSample = command.startSample
             fragmentContentStartSample = command.contentStartSample
+            fragmentProfileId = command.profileId
+            fragmentEventClass = command.eventClass
+            fragmentTriggerReasons = command.triggerReasons
+            fragmentThresholdSummary = command.thresholdSummary
         } catch (error: IOException) {
             try {
                 file?.close()
@@ -500,6 +538,13 @@ internal class AudioFragmentWriter(
                 truncated = command.truncated,
                 contentStartSample = contentStartSample,
                 contentEndSample = contentStartSample + samples,
+                profileId = fragmentProfileId,
+                eventClass = fragmentEventClass,
+                reviewStatus = RecordingEventMetadata.REVIEW_STATUS_UNREVIEWED,
+                triggerReasons = fragmentTriggerReasons,
+                thresholdSummary = fragmentThresholdSummary,
+                peakDbfs = command.peakDbfs,
+                averageDbfs = command.averageDbfs,
             )
             val metadataSaved = AudioFragmentMetadata.write(path, fragment, config.sampleRate)
 

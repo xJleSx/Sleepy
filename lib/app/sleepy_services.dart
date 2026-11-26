@@ -22,6 +22,7 @@ class SleepyServices {
     sessions = SleepSessionController(
       repository: JsonSleepSessionRepository(store: localStore),
       now: clock,
+      recording: recording,
     );
     monitor = SleepMonitorController(
       gateway: recording,

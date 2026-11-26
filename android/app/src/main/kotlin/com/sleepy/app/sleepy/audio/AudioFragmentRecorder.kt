@@ -24,6 +24,13 @@ data class SavedAudioFragment(
     val contentStartSample: Long = startSample,
     /** Абсолютный индекс сразу после последнего записанного сэмпла. */
     val contentEndSample: Long = contentStartSample + samples,
+    val profileId: String = RecordingProfile.STANDARD.storageValue,
+    val eventClass: String = RecordingEventMetadata.EVENT_CLASS_NORMAL,
+    val reviewStatus: String = RecordingEventMetadata.REVIEW_STATUS_UNREVIEWED,
+    val triggerReasons: String = "",
+    val thresholdSummary: String = "",
+    val peakDbfs: Double? = null,
+    val averageDbfs: Double? = null,
 )
 
 /**
@@ -105,6 +112,11 @@ class AudioFragmentRecorder(
 
     private val savedCounter = AtomicInteger(0)
 
+    private var weakAcceptedCounter = 0L
+    private var weakRejectedCounter = 0L
+    private var lastWeakRejectionMessage = ""
+    private var lastWeakSavedAtMillis = Long.MIN_VALUE
+
     @Volatile
     private var lastWarningMessage = ""
 
@@ -140,6 +152,10 @@ class AudioFragmentRecorder(
     private var fragmentEndSample = 0L
 
     private var fragmentTruncated = false
+
+    private var lastEventPeakDbfs: Double? = null
+
+    private var lastEventAverageDbfs: Double? = null
 
     private var lastContentEndSample = 0L
 
@@ -183,6 +199,11 @@ class AudioFragmentRecorder(
             writerFailedCount = writer.failedCountTotal,
             lastWriterError = writer.lastErrorText,
             lastFragmentPath = writer.lastSavedPathText,
+            profileId = config.profile.storageValue,
+            weakCandidateCount = detector.weakCandidateCountTotal,
+            weakSavedCount = weakAcceptedCounter,
+            weakRejectedCount = weakRejectedCounter,
+            lastWeakRejection = lastWeakRejectionMessage,
         )
 
     /**
@@ -233,6 +254,10 @@ class AudioFragmentRecorder(
 
         override fun onEventFinished(event: DetectedAudioEvent) {
             handleEventFinished(event)
+        }
+
+        override fun onWeakCandidate(event: DetectedAudioEvent) {
+            handleWeakCandidate(event)
         }
     }
 
@@ -294,7 +319,16 @@ class AudioFragmentRecorder(
 
         writerGeneration += 1
         currentWriterGeneration = writerGeneration
-        writer.open(currentWriterGeneration, startedAtMillis, startSample, from)
+        writer.open(
+            generation = currentWriterGeneration,
+            startedAtMillis = startedAtMillis,
+            startSample = startSample,
+            contentStartSample = from,
+            profileId = config.profile.storageValue,
+            eventClass = RecordingEventMetadata.EVENT_CLASS_NORMAL,
+            triggerReasons = "normal-threshold",
+            thresholdSummary = config.thresholdSummary,
+        )
 
         fragmentOpen = true
         fragmentStartMillis = startedAtMillis
@@ -330,6 +364,8 @@ class AudioFragmentRecorder(
         fragmentEndMillis = event.endedAtMillis
         fragmentEndSample = event.endSample
         fragmentTruncated = event.truncated
+        lastEventPeakDbfs = event.peakDbfs
+        lastEventAverageDbfs = event.averageDbfs
 
         if (event.truncated) {
             expectContinuation = true
@@ -338,6 +374,80 @@ class AudioFragmentRecorder(
         } else {
             postRollEndSample = event.endSample + config.postRollSamples
         }
+    }
+
+    private fun handleWeakCandidate(event: DetectedAudioEvent) {
+        consumeWriterFailure()
+
+        if (fragmentOpen || expectContinuation) {
+            rejectWeak("weak-overlaps-normal-event")
+            return
+        }
+        if (config.weakMaxCandidatesPerSession <= 0 ||
+            weakAcceptedCounter >= config.weakMaxCandidatesPerSession
+        ) {
+            rejectWeak("weak-session-limit")
+            return
+        }
+        if (lastWeakSavedAtMillis != Long.MIN_VALUE &&
+            event.startedAtMillis - lastWeakSavedAtMillis < config.weakCooldownMs
+        ) {
+            rejectWeak("weak-cooldown")
+            return
+        }
+
+        val desiredFrom = maxOf(0L, event.startSample - config.preRollSamples)
+        val desiredTo = minOf(
+            ringBuffer.totalSamplesWritten,
+            event.endSample + config.postRollSamples,
+        )
+        val requestedFrom = maxOf(desiredFrom, ringBuffer.oldestAvailableSample)
+        if (requestedFrom >= desiredTo) {
+            rejectWeak("weak-audio-unavailable")
+            return
+        }
+        if (requestedFrom > desiredFrom) {
+            warn("Pre-roll слабого кандидата обрезан: кольцевой буфер перезаписан")
+        }
+
+        writerGeneration += 1
+        currentWriterGeneration = writerGeneration
+        writer.open(
+            generation = currentWriterGeneration,
+            startedAtMillis = event.startedAtMillis,
+            startSample = event.startSample,
+            contentStartSample = requestedFrom,
+            profileId = config.profile.storageValue,
+            eventClass = RecordingEventMetadata.EVENT_CLASS_WEAK,
+            triggerReasons = event.triggerReason.ifBlank { "weak-threshold" },
+            thresholdSummary = config.thresholdSummary,
+        )
+
+        fragmentOpen = true
+        fragmentStartMillis = event.startedAtMillis
+        fragmentEndMillis = event.endedAtMillis
+        fragmentStartSample = event.startSample
+        fragmentEndSample = event.endSample
+        fragmentTruncated = event.truncated
+        lastEventPeakDbfs = event.peakDbfs
+        lastEventAverageDbfs = event.averageDbfs
+        postRollEndSample = desiredTo
+        writtenUpTo = requestedFrom
+
+        if (!appendPendingSamples()) {
+            weakRejectedCounter += 1
+            lastWeakRejectionMessage = "weak-write-failed"
+            return
+        }
+
+        finishFragment()
+        weakAcceptedCounter += 1
+        lastWeakSavedAtMillis = event.endedAtMillis
+    }
+
+    private fun rejectWeak(reason: String) {
+        weakRejectedCounter += 1
+        lastWeakRejectionMessage = reason
     }
 
     /**
@@ -434,7 +544,14 @@ class AudioFragmentRecorder(
         }
 
         val contentEnd = if (trimTo != null) minOf(trimTo, writtenUpTo) else writtenUpTo
-        writer.finish(fragmentEndMillis, fragmentEndSample, fragmentTruncated, contentEnd)
+        writer.finish(
+            endedAtMillis = fragmentEndMillis,
+            endSample = fragmentEndSample,
+            truncated = fragmentTruncated,
+            contentEndSample = contentEnd,
+            peakDbfs = lastEventPeakDbfs,
+            averageDbfs = lastEventAverageDbfs,
+        )
         lastContentEndSample = contentEnd
         if (fragmentEndSample > 0L) {
             previousEventEndSample = fragmentEndSample
@@ -484,6 +601,8 @@ class AudioFragmentRecorder(
         fragmentStartSample = 0L
         fragmentEndSample = 0L
         fragmentTruncated = false
+        lastEventPeakDbfs = null
+        lastEventAverageDbfs = null
     }
 
     private fun warn(message: String) {

@@ -22,6 +22,9 @@ class SleepReportPage extends StatefulWidget {
 
 class _SleepReportPageState extends State<SleepReportPage> {
   static const _reportService = SleepReportService();
+  static const _noiseChartHeight = 120.0;
+  static const _noiseMinDbfs = -80.0;
+  static const _noiseMaxDbfs = 0.0;
   SleepyServices? _services;
 
   @override
@@ -96,6 +99,9 @@ class _SleepReportPageState extends State<SleepReportPage> {
       const SectionLabel('Звуковые события по часам'),
       _timeline(report),
       const SizedBox(height: AppSpacing.xxl),
+      const SectionLabel('Шум по часам'),
+      _noiseTimeline(report),
+      const SizedBox(height: AppSpacing.xxl),
       const SectionLabel('Сравнение'),
       _comparison(report.comparison),
       const SizedBox(height: AppSpacing.xxl),
@@ -147,9 +153,7 @@ class _SleepReportPageState extends State<SleepReportPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            for (var index = 0;
-                index < report.recommendations.length;
-                index++)
+            for (var index = 0; index < report.recommendations.length; index++)
               Padding(
                 padding: EdgeInsets.only(
                   bottom: index == report.recommendations.length - 1
@@ -159,11 +163,7 @@ class _SleepReportPageState extends State<SleepReportPage> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(
-                      Icons.arrow_right,
-                      color: accent,
-                      size: 18,
-                    ),
+                    const Icon(Icons.arrow_right, color: accent, size: 18),
                     const SizedBox(width: AppSpacing.sm),
                     Expanded(
                       child: Text(
@@ -221,8 +221,7 @@ class _SleepReportPageState extends State<SleepReportPage> {
                   ],
                 ),
               ),
-              if (report.session.status ==
-                  SleepSessionStatus.interrupted)
+              if (report.session.status == SleepSessionStatus.interrupted)
                 const StatusPill(label: 'Прервано', color: warning),
             ],
           ),
@@ -266,10 +265,7 @@ class _SleepReportPageState extends State<SleepReportPage> {
           ),
           if (report.score.provisional) ...[
             const SizedBox(height: AppSpacing.md),
-            const StatusPill(
-              label: 'предварительная оценка',
-              color: warning,
-            ),
+            const StatusPill(label: 'предварительная оценка', color: warning),
           ],
           const SizedBox(height: AppSpacing.xl),
           Row(
@@ -327,10 +323,7 @@ class _SleepReportPageState extends State<SleepReportPage> {
                   const SizedBox(height: 3),
                   Text(
                     component.explanation,
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 12,
-                    ),
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                 ],
               ),
@@ -414,6 +407,147 @@ class _SleepReportPageState extends State<SleepReportPage> {
     );
   }
 
+  Widget _noiseTimeline(SleepReport report) {
+    final buckets = report.distribution;
+    final hasData = buckets.any((bucket) => bucket.hasNoiseData);
+    if (!hasData) {
+      return const AppCard(
+        child: Text(
+          'Для этой сессии уровень громкости записей не сохранился.',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
+
+    return AppCard(
+      child: Column(
+        children: [
+          SizedBox(
+            height: _noiseChartHeight,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  width: 34,
+                  child: Stack(
+                    children: [
+                      Positioned(top: 0, left: 0, child: _noiseAxisLabel('0')),
+                      Positioned(
+                        top: _noiseChartHeight / 2 - 6,
+                        left: 0,
+                        child: _noiseAxisLabel('-40'),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        child: _noiseAxisLabel('-80'),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: _noiseGridLine(),
+                      ),
+                      Positioned(
+                        top: _noiseChartHeight / 2,
+                        left: 0,
+                        right: 0,
+                        child: _noiseGridLine(),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: _noiseGridLine(),
+                      ),
+                      Positioned.fill(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            for (final bucket in buckets)
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 2,
+                                  ),
+                                  child: Align(
+                                    alignment: Alignment.bottomCenter,
+                                    child: Container(
+                                      height: bucket.averageDbfs == null
+                                          ? 2
+                                          : _noiseBarHeight(
+                                              bucket.averageDbfs!,
+                                            ),
+                                      decoration: BoxDecoration(
+                                        color: bucket.averageDbfs == null
+                                            ? Colors.white12
+                                            : accent.withValues(alpha: 0.85),
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              const SizedBox(width: 34),
+              for (final bucket in buckets)
+                Expanded(
+                  child: Text(
+                    formatClockShort(bucket.start).substring(0, 2),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white38, fontSize: 9),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          const Text(
+            'Средняя громкость сохранённых фрагментов по часам. '
+            'Промежутки без записей не измеряются.',
+            style: TextStyle(color: Colors.white38, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _noiseAxisLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(color: Colors.white38, fontSize: 9),
+    );
+  }
+
+  Widget _noiseGridLine() {
+    return Container(height: 1, color: Colors.white12);
+  }
+
+  double _noiseBarHeight(double dbfs) {
+    final clamped = dbfs.clamp(_noiseMinDbfs, _noiseMaxDbfs);
+    final normalized =
+        (clamped - _noiseMinDbfs) / (_noiseMaxDbfs - _noiseMinDbfs);
+    return (normalized * _noiseChartHeight)
+        .clamp(2.0, _noiseChartHeight)
+        .toDouble();
+  }
+
   Widget _comparison(SleepComparison comparison) {
     return AppCard(
       child: Column(
@@ -445,10 +579,7 @@ class _SleepReportPageState extends State<SleepReportPage> {
             style: const TextStyle(color: Colors.white54, fontSize: 13),
           ),
         ),
-        Text(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
       ],
     );
   }

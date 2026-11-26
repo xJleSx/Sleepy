@@ -42,6 +42,56 @@ void main() {
     expect(report.awakenings, isNull);
   });
 
+  test('averages saved recording levels by hour', () {
+    final session = _session(
+      id: 'noise',
+      start: DateTime(2026, 11, 23, 23),
+      end: DateTime(2026, 11, 24, 7),
+      events: <SleepEvent>[
+        _event(
+          'a',
+          DateTime(2026, 11, 24, 1, 10),
+          const Duration(seconds: 4),
+          averageDbfs: -60,
+        ),
+        _event(
+          'b',
+          DateTime(2026, 11, 24, 1, 50),
+          const Duration(seconds: 9),
+          averageDbfs: -40,
+        ),
+        _event(
+          'c',
+          DateTime(2026, 11, 24, 3, 10),
+          const Duration(seconds: 9),
+          averageDbfs: -30,
+        ),
+      ],
+    );
+
+    final report = service.build(
+      session: session,
+      allSessions: <SleepSession>[session],
+    );
+
+    final one = report.distribution.firstWhere(
+      (bucket) => bucket.start.hour == 1,
+    );
+    final two = report.distribution.firstWhere(
+      (bucket) => bucket.start.hour == 2,
+    );
+    final three = report.distribution.firstWhere(
+      (bucket) => bucket.start.hour == 3,
+    );
+
+    expect(one.count, 2);
+    expect(one.averageDbfs, -50.0);
+    expect(one.hasNoiseData, isTrue);
+    expect(two.averageDbfs, isNull);
+    expect(two.hasNoiseData, isFalse);
+    expect(three.averageDbfs, -30.0);
+  });
+
   test('marks a short night and avoids claiming a diagnosis', () {
     final session = _session(
       id: 'short',
@@ -76,7 +126,12 @@ SleepSession _session({
   );
 }
 
-SleepEvent _event(String id, DateTime start, Duration duration) {
+SleepEvent _event(
+  String id,
+  DateTime start,
+  Duration duration, {
+  double? averageDbfs,
+}) {
   return SleepEvent(
     id: id,
     fileName: '$id.wav',
@@ -84,5 +139,6 @@ SleepEvent _event(String id, DateTime start, Duration duration) {
     startedAt: start,
     duration: duration,
     sizeBytes: 1024,
+    averageDbfs: averageDbfs,
   );
 }

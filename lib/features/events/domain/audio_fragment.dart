@@ -12,6 +12,12 @@ class AudioFragment {
     this.detectorStartSample,
     this.detectorEndSample,
     this.truncated = false,
+    this.profileId = 'STANDARD',
+    this.eventClass = 'EVENT',
+    this.reviewStatus = 'UNREVIEWED',
+    this.triggerReasons = '',
+    this.peakDbfs,
+    this.averageDbfs,
   });
 
   /// Уникальный идентификатор внутри каталога: имя файла.
@@ -40,6 +46,16 @@ class AudioFragment {
   final int? detectorEndSample;
 
   final bool truncated;
+  final String profileId;
+  final String eventClass;
+  final String reviewStatus;
+  final String triggerReasons;
+  final double? peakDbfs;
+  final double? averageDbfs;
+
+  bool get isWeakCandidate => eventClass == 'WEAK_CANDIDATE';
+
+  bool get needsReview => reviewStatus == 'UNREVIEWED';
 
   bool get hasContentBoundaries =>
       contentStartSample != null &&
@@ -62,6 +78,12 @@ class AudioFragment {
     final detectorStartSample = _optionalSample(raw['detectorStartSample']);
     final detectorEndSample = _optionalSample(raw['detectorEndSample']);
     final truncated = raw['truncated'];
+    final profileId = _text(raw['profileId'], fallback: 'STANDARD');
+    final eventClass = _text(raw['eventClass'], fallback: 'EVENT');
+    final reviewStatus = _text(raw['reviewStatus'], fallback: 'UNREVIEWED');
+    final triggerReasons = _text(raw['triggerReasons']);
+    final peakDbfs = _optionalDouble(raw['peakDbfs']);
+    final averageDbfs = _optionalDouble(raw['averageDbfs']);
 
     if (id is! String || id.isEmpty) return null;
     if (fileName is! String || fileName.isEmpty) return null;
@@ -86,6 +108,12 @@ class AudioFragment {
       detectorStartSample: validBoundaries ? detectorStartSample : null,
       detectorEndSample: validBoundaries ? detectorEndSample : null,
       truncated: validBoundaries && truncated is bool ? truncated : false,
+      profileId: profileId,
+      eventClass: eventClass,
+      reviewStatus: reviewStatus,
+      triggerReasons: triggerReasons,
+      peakDbfs: peakDbfs,
+      averageDbfs: averageDbfs,
     );
   }
 
@@ -93,5 +121,14 @@ class AudioFragment {
     if (raw is! num) return null;
     final value = raw.toInt();
     return value >= 0 ? value : null;
+  }
+
+  static double? _optionalDouble(Object? raw) {
+    if (raw is! num) return null;
+    return raw.toDouble();
+  }
+
+  static String _text(Object? raw, {String fallback = ''}) {
+    return raw is String && raw.isNotEmpty ? raw : fallback;
   }
 }

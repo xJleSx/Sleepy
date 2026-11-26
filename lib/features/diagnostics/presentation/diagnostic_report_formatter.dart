@@ -42,6 +42,8 @@ String buildDiagnosticReport(DiagnosticReport report) {
   buffer.writeln();
 
   buffer.writeln('ДЕТЕКТОР · СЕССИЯ');
+  buffer.writeln('recordingProfile: ${status.recordingProfile}');
+  buffer.writeln('diagnosticProfile: ${status.diagnosticProfile}');
   buffer.writeln(
     'currentDetectorState: ${formatDetectorState(status.currentDetectorState)}',
   );
@@ -53,6 +55,16 @@ String buildDiagnosticReport(DiagnosticReport report) {
     'confirmedEventCount: '
     '${formatOptionalCount(status.confirmedEventCount)}',
   );
+  buffer.writeln(
+    'weakCandidateCount: ${formatOptionalCount(status.weakCandidateCount)}',
+  );
+  buffer.writeln(
+    'weakSavedCount: ${formatOptionalCount(status.weakSavedCount)}',
+  );
+  buffer.writeln(
+    'weakRejectedCount: ${formatOptionalCount(status.weakRejectedCount)}',
+  );
+  buffer.writeln('lastWeakRejection: ${_textOrNone(status.lastWeakRejection)}');
   buffer.writeln();
 
   buffer.writeln('ЗАПИСЬ ФАЙЛОВ · СЕССИЯ');

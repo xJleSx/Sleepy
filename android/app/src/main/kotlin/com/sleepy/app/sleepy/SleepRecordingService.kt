@@ -42,8 +42,6 @@ class SleepRecordingService : Service() {
         private const val STOP_WATCHDOG_MS = 15_000L
     }
 
-    private val config = RecordingConfig.DEFAULT
-
     private lateinit var statusStore: RecordingStatusStore
 
     private lateinit var controller: RecordingSessionController<AudioCaptureSession>
@@ -142,6 +140,8 @@ class SleepRecordingService : Service() {
             statusStore.saveFatalError("Не удалось создать папку записей")
             return null
         }
+
+        val config = RecordingConfig.forProfile(statusStore.selectedProfile())
 
         return AudioCaptureSession(
             config = config,

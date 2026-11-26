@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../events/data/recording_gateway.dart';
 import '../../events/domain/recording_status.dart';
 import '../../sessions/application/sleep_session_controller.dart';
+import '../domain/recording_profile.dart';
 import '../../sessions/domain/sleep_session.dart';
 
 class SleepMonitorException implements Exception {
@@ -38,6 +39,8 @@ class SleepMonitorController extends ChangeNotifier {
   String? _error;
   SleepSession? _lastCompletedSession;
   Timer? _ticker;
+  RecordingProfile _profile = RecordingProfile.standard;
+  bool _profileInitialized = false;
 
   RecordingStatus get status => _status;
   bool get isRecording => _status.isRecording;
@@ -48,6 +51,7 @@ class SleepMonitorController extends ChangeNotifier {
   String? get error => _error;
   SleepSession? get lastCompletedSession => _lastCompletedSession;
   SleepSessionController get sessions => _sessions;
+  RecordingProfile get profile => _profile;
 
   Duration get elapsed {
     final startedAt = _status.startedAt;
@@ -65,6 +69,8 @@ class SleepMonitorController extends ChangeNotifier {
     try {
       await _sessions.load();
       _status = await _gateway.fetchStatus();
+      _profile = RecordingProfile.fromId(_status.recordingProfile);
+      _profileInitialized = true;
 
       if (_status.isRecording) {
         await _sessions.start(_status.startedAt ?? _now());
@@ -93,6 +99,10 @@ class SleepMonitorController extends ChangeNotifier {
       final previous = _status;
       final next = await _gateway.fetchStatus();
       _status = next;
+      if (!_profileInitialized) {
+        _profile = RecordingProfile.fromId(next.recordingProfile);
+        _profileInitialized = true;
+      }
       _error = null;
 
       if (next.isRecording) {
@@ -115,6 +125,23 @@ class SleepMonitorController extends ChangeNotifier {
     }
   }
 
+  Future<void> setProfile(RecordingProfile profile) async {
+    if (_profile == profile) return;
+
+    final previous = _profile;
+    _profile = profile;
+    notifyListeners();
+
+    try {
+      await _control.setRecordingProfile(profile.id);
+    } on RecordingGatewayException catch (exception) {
+      _profile = previous;
+      _error = exception.message;
+      notifyListeners();
+      throw SleepMonitorException(exception.message);
+    }
+  }
+
   Future<void> start() async {
     if (_starting || _stopping) {
       throw const SleepMonitorException('Операция уже выполняется');
@@ -132,6 +159,7 @@ class SleepMonitorController extends ChangeNotifier {
         );
       }
 
+      await _control.setRecordingProfile(_profile.id);
       await _control.startRecording();
 
       for (var attempt = 0; attempt < 12; attempt++) {

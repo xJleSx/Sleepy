@@ -7,6 +7,8 @@ class SleepEvent {
     required this.duration,
     required this.sizeBytes,
     this.truncated = false,
+    this.peakDbfs,
+    this.averageDbfs,
   });
 
   final String id;
@@ -16,8 +18,24 @@ class SleepEvent {
   final Duration duration;
   final int sizeBytes;
   final bool truncated;
+  final double? peakDbfs;
+  final double? averageDbfs;
 
   DateTime get endedAt => startedAt.add(duration);
+
+  SleepEvent copyWith({double? peakDbfs, double? averageDbfs}) {
+    return SleepEvent(
+      id: id,
+      fileName: fileName,
+      filePath: filePath,
+      startedAt: startedAt,
+      duration: duration,
+      sizeBytes: sizeBytes,
+      truncated: truncated,
+      peakDbfs: peakDbfs ?? this.peakDbfs,
+      averageDbfs: averageDbfs ?? this.averageDbfs,
+    );
+  }
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
@@ -28,6 +46,8 @@ class SleepEvent {
       'durationMs': duration.inMilliseconds,
       'sizeBytes': sizeBytes,
       'truncated': truncated,
+      if (peakDbfs != null) 'peakDbfs': peakDbfs,
+      if (averageDbfs != null) 'averageDbfs': averageDbfs,
     };
   }
 
@@ -41,6 +61,8 @@ class SleepEvent {
     final durationMs = raw['durationMs'];
     final sizeBytes = raw['sizeBytes'];
     final truncated = raw['truncated'];
+    final peakDbfs = _optionalDouble(raw['peakDbfs']);
+    final averageDbfs = _optionalDouble(raw['averageDbfs']);
 
     if (id is! String || id.isEmpty) return null;
     if (fileName is! String || fileName.isEmpty) return null;
@@ -57,6 +79,12 @@ class SleepEvent {
       duration: Duration(milliseconds: durationMs.toInt()),
       sizeBytes: sizeBytes.toInt(),
       truncated: truncated == true,
+      peakDbfs: peakDbfs,
+      averageDbfs: averageDbfs,
     );
+  }
+
+  static double? _optionalDouble(Object? raw) {
+    return raw is num ? raw.toDouble() : null;
   }
 }

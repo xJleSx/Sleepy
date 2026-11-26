@@ -49,6 +49,59 @@ void main() {
       expect(fragment.truncated, isTrue);
     });
 
+    test('reads weak candidate metadata and review state', () {
+      final fragment = AudioFragment.parse(<String, Object>{
+        'id': 'event_weak.wav',
+        'fileName': 'event_weak.wav',
+        'filePath': '/tmp/event_weak.wav',
+        'startedAtMillis': 1763240400000,
+        'durationMs': 10000,
+        'sizeBytes': 320044,
+        'contentStartSample': 4800,
+        'contentEndSample': 324800,
+        'profileId': 'HIGH',
+        'eventClass': 'WEAK_CANDIDATE',
+        'reviewStatus': 'UNREVIEWED',
+        'triggerReasons': 'weak_threshold',
+        'peakDbfs': -48.5,
+        'averageDbfs': -55.25,
+      });
+
+      expect(fragment, isNotNull);
+      expect(fragment!.profileId, 'HIGH');
+      expect(fragment.eventClass, 'WEAK_CANDIDATE');
+      expect(fragment.reviewStatus, 'UNREVIEWED');
+      expect(fragment.isWeakCandidate, isTrue);
+      expect(fragment.needsReview, isTrue);
+      expect(fragment.triggerReasons, 'weak_threshold');
+      expect(fragment.peakDbfs, -48.5);
+      expect(fragment.averageDbfs, -55.25);
+    });
+
+    test('defaults legacy fragments to standard unreviewed events', () {
+      final fragment = AudioFragment.parse(<String, Object>{
+        'id': 'event_legacy.wav',
+        'fileName': 'event_legacy.wav',
+        'filePath': '/tmp/event_legacy.wav',
+        'startedAtMillis': 1763240400000,
+        'durationMs': 21000,
+        'sizeBytes': 672044,
+        'profileId': '',
+        'eventClass': '',
+        'reviewStatus': '',
+        'triggerReasons': '',
+      });
+
+      expect(fragment, isNotNull);
+      expect(fragment!.profileId, 'STANDARD');
+      expect(fragment.eventClass, 'EVENT');
+      expect(fragment.reviewStatus, 'UNREVIEWED');
+      expect(fragment.isWeakCandidate, isFalse);
+      expect(fragment.needsReview, isTrue);
+      expect(fragment.peakDbfs, isNull);
+      expect(fragment.averageDbfs, isNull);
+    });
+
     test('drops missing or inconsistent sidecar boundaries', () {
       final missing = AudioFragment.parse(<String, Object>{
         'id': 'event_missing.wav',
@@ -137,6 +190,41 @@ void main() {
       expect(status.startedAt, isNotNull);
       expect(status.endedAt, isNull);
       expect(status.lastActivityAt, status.lastFragmentAt);
+    });
+
+    test('reads profiles and weak candidate counters', () {
+      final status = RecordingStatus.fromMap(<String, dynamic>{
+        'isRecording': false,
+        'recordingProfile': 'VERY_HIGH',
+        'diagnosticProfile': 'HIGH',
+        'weakCandidateCount': 7,
+        'weakSavedCount': 5,
+        'weakRejectedCount': 2,
+        'lastWeakRejection': 'cooldown',
+      });
+
+      expect(status.recordingProfile, 'VERY_HIGH');
+      expect(status.diagnosticProfile, 'HIGH');
+      expect(status.weakCandidateCount, 7);
+      expect(status.weakSavedCount, 5);
+      expect(status.weakRejectedCount, 2);
+      expect(status.lastWeakRejection, 'cooldown');
+    });
+
+    test('defaults unknown profiles and missing weak counters safely', () {
+      final status = RecordingStatus.fromMap(<String, dynamic>{
+        'recordingProfile': 'high',
+        'diagnosticProfile': 42,
+        'weakCandidateCount': '7',
+        'lastWeakRejection': '',
+      });
+
+      expect(status.recordingProfile, 'STANDARD');
+      expect(status.diagnosticProfile, 'STANDARD');
+      expect(status.weakCandidateCount, isNull);
+      expect(status.weakSavedCount, isNull);
+      expect(status.weakRejectedCount, isNull);
+      expect(status.lastWeakRejection, isEmpty);
     });
 
     test('falls back to an empty status', () {

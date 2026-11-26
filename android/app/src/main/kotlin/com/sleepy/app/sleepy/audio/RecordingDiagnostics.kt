@@ -24,4 +24,9 @@ data class RecordingDiagnostics(
     val writerFailedCount: Long = 0L,
     val lastWriterError: String = "",
     val lastFragmentPath: String = "",
+    val profileId: String = RecordingProfile.STANDARD.storageValue,
+    val weakCandidateCount: Long = 0L,
+    val weakSavedCount: Long = 0L,
+    val weakRejectedCount: Long = 0L,
+    val lastWeakRejection: String = "",
 )

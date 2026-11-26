@@ -12,6 +12,7 @@ import com.sleepy.app.sleepy.alarm.SleepAlarmScheduler
 import com.sleepy.app.sleepy.audio.AudioFragmentCatalog
 import com.sleepy.app.sleepy.audio.AudioFragmentMetadata
 import com.sleepy.app.sleepy.audio.FragmentPlayer
+import com.sleepy.app.sleepy.audio.RecordingProfile
 import com.sleepy.app.sleepy.audio.RecordingStatusStore
 import com.sleepy.app.sleepy.dataset.DatasetDeletionResult
 import com.sleepy.app.sleepy.dataset.DatasetDevice
@@ -161,6 +162,10 @@ class MainActivity : FlutterActivity() {
                     requestMicrophonePermission(result)
                 }
 
+                "setRecordingProfile" -> {
+                    setRecordingProfile(call.argument<String>("profile"), result)
+                }
+
                 "startRecording" -> {
                     startRecording(result)
                 }
@@ -299,6 +304,15 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun setRecordingProfile(
+        value: String?,
+        result: MethodChannel.Result,
+    ) {
+        val profile = RecordingProfile.fromStorage(value)
+        RecordingStatusStore(this).setRecordingProfile(profile)
+        result.success(profile.storageValue)
+    }
+
     private fun startRecording(result: MethodChannel.Result) {
         if (
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
@@ -427,6 +441,13 @@ class MainActivity : FlutterActivity() {
                             item["contentStartSample"] = metadata.contentStartSample
                             item["contentEndSample"] = metadata.contentEndSample
                             item["truncated"] = metadata.truncated
+                            item["profileId"] = metadata.profileId
+                            item["eventClass"] = metadata.eventClass
+                            item["reviewStatus"] = metadata.reviewStatus
+                            item["triggerReasons"] = metadata.triggerReasons
+                            item["thresholdSummary"] = metadata.thresholdSummary
+                            metadata.peakDbfs?.let { item["peakDbfs"] = it }
+                            metadata.averageDbfs?.let { item["averageDbfs"] = it }
                         }
                         item
                     }

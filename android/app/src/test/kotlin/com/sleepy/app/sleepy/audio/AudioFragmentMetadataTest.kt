@@ -87,6 +87,40 @@ class AudioFragmentMetadataTest {
         assertNull(AudioFragmentMetadata.read(wav))
     }
 
+    @Test
+    fun readsLegacySchemaV1WithSafeDefaults() {
+        val directory = temporaryFolder.newFolder("metadata-v1")
+        val wav = File(directory, "event_20261119_230000_000_001.wav")
+        wav.writeBytes(ByteArray(64_000))
+        val sidecar = AudioFragmentMetadata.sidecarFile(wav)
+        sidecar.writeText(
+            """
+            schema_version=1
+            file_name=${wav.name}
+            sample_rate_hz=16000
+            started_at_millis=1000
+            ended_at_millis=2000
+            duration_ms=1000
+            samples=32000
+            start_sample=32000
+            end_sample=64000
+            content_start_sample=0
+            content_end_sample=32000
+            truncated=false
+            size_bytes=64000
+            """.trimIndent(),
+        )
+
+        val metadata = requireNotNull(AudioFragmentMetadata.read(wav))
+
+        assertEquals(1, metadata.schemaVersion)
+        assertEquals(RecordingProfile.STANDARD.storageValue, metadata.profileId)
+        assertEquals(RecordingEventMetadata.EVENT_CLASS_NORMAL, metadata.eventClass)
+        assertEquals(RecordingEventMetadata.REVIEW_STATUS_UNREVIEWED, metadata.reviewStatus)
+        assertNull(metadata.peakDbfs)
+        assertNull(metadata.averageDbfs)
+    }
+
     private fun fragment(wav: File): SavedAudioFragment = SavedAudioFragment(
         file = wav,
         startedAtMillis = 1_000L,

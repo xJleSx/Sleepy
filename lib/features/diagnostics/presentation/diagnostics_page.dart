@@ -469,6 +469,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _sectionTitle('ДЕТЕКТОР · СЕССИЯ'),
+          _metricRow('Профиль', status.diagnosticProfile),
           _metricRow(
             'Состояние',
             formatDetectorState(status.currentDetectorState),
@@ -479,6 +480,20 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
             'Подтверждено',
             formatOptionalCount(status.confirmedEventCount),
           ),
+          _metricRow(
+            'Слабые кандидаты',
+            formatOptionalCount(status.weakCandidateCount),
+          ),
+          _metricRow(
+            'Слабых сохранено',
+            formatOptionalCount(status.weakSavedCount),
+          ),
+          _metricRow(
+            'Слабых отклонено',
+            formatOptionalCount(status.weakRejectedCount),
+          ),
+          if (status.lastWeakRejection.isNotEmpty)
+            _metricRow('Причина отказа', status.lastWeakRejection),
         ],
       ),
     );

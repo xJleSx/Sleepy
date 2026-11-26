@@ -33,6 +33,12 @@ void main() {
       lastWarning: 'Очередь writer переполнена',
       currentDetectorState: 'QUIET',
       lastFragmentPath: lastFragmentPath,
+      recordingProfile: 'HIGH',
+      diagnosticProfile: 'VERY_HIGH',
+      weakCandidateCount: 3,
+      weakSavedCount: 2,
+      weakRejectedCount: 1,
+      lastWeakRejection: 'cooldown',
     );
   }
 
@@ -70,6 +76,12 @@ void main() {
     expect(text, contains('Длительность: 00:21:05'));
     expect(text, contains('noiseFloorDbfs: нет сигнала'));
     expect(text, contains('lastChunkDbfs: −54.2 дБFS'));
+    expect(text, contains('recordingProfile: HIGH'));
+    expect(text, contains('diagnosticProfile: VERY_HIGH'));
+    expect(text, contains('weakCandidateCount: 3'));
+    expect(text, contains('weakSavedCount: 2'));
+    expect(text, contains('weakRejectedCount: 1'));
+    expect(text, contains('lastWeakRejection: cooldown'));
     expect(text, contains('writerFailedCount: 1'));
     expect(text, contains('Показано 2 из 2'));
     expect(text, contains('event_001.wav'));

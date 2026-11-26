@@ -19,9 +19,16 @@ data class AudioFragmentMetadata(
     val contentEndSample: Long,
     val truncated: Boolean,
     val sizeBytes: Long,
+    val profileId: String = RecordingProfile.STANDARD.storageValue,
+    val eventClass: String = RecordingEventMetadata.EVENT_CLASS_NORMAL,
+    val reviewStatus: String = RecordingEventMetadata.REVIEW_STATUS_UNREVIEWED,
+    val triggerReasons: String = "",
+    val thresholdSummary: String = "",
+    val peakDbfs: Double? = null,
+    val averageDbfs: Double? = null,
 ) {
     companion object {
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
         const val EXTENSION = "meta"
 
         fun sidecarFile(wavFile: File): File = File(
@@ -58,6 +65,13 @@ data class AudioFragmentMetadata(
                 appendLine("content_end_sample=${fragment.contentEndSample}")
                 appendLine("truncated=${fragment.truncated}")
                 appendLine("size_bytes=${wavFile.length()}")
+                appendLine("profile_id=${fragment.profileId}")
+                appendLine("event_class=${fragment.eventClass}")
+                appendLine("review_status=${fragment.reviewStatus}")
+                appendLine("trigger_reasons=${fragment.triggerReasons}")
+                appendLine("threshold_summary=${fragment.thresholdSummary}")
+                fragment.peakDbfs?.let { appendLine("peak_dbfs=$it") }
+                fragment.averageDbfs?.let { appendLine("average_dbfs=$it") }
             }
 
             return try {
@@ -112,6 +126,16 @@ data class AudioFragmentMetadata(
                     contentEndSample = properties.requiredLong("content_end_sample"),
                     truncated = properties.requiredBoolean("truncated"),
                     sizeBytes = properties.requiredLong("size_bytes"),
+                    profileId = properties.optionalText("profile_id")
+                        ?: RecordingProfile.STANDARD.storageValue,
+                    eventClass = properties.optionalText("event_class")
+                        ?: RecordingEventMetadata.EVENT_CLASS_NORMAL,
+                    reviewStatus = properties.optionalText("review_status")
+                        ?: RecordingEventMetadata.REVIEW_STATUS_UNREVIEWED,
+                    triggerReasons = properties.optionalText("trigger_reasons").orEmpty(),
+                    thresholdSummary = properties.optionalText("threshold_summary").orEmpty(),
+                    peakDbfs = properties.optionalDouble("peak_dbfs"),
+                    averageDbfs = properties.optionalDouble("average_dbfs"),
                 )
                 metadata.takeIf { it.isValidFor(wavFile) }
             } catch (_: IllegalArgumentException) {
@@ -130,7 +154,7 @@ data class AudioFragmentMetadata(
         }
 
         private fun AudioFragmentMetadata.isValidFor(wavFile: File): Boolean =
-            schemaVersion == SCHEMA_VERSION &&
+            schemaVersion in 1..SCHEMA_VERSION &&
                 fileName == wavFile.name &&
                 sampleRateHz > 0 &&
                 durationMs > 0 &&
@@ -145,6 +169,12 @@ data class AudioFragmentMetadata(
         private fun Properties.requiredText(key: String): String =
             getProperty(key)?.takeIf { it.isNotBlank() }
                 ?: throw IllegalArgumentException(key)
+
+        private fun Properties.optionalText(key: String): String? =
+            getProperty(key)?.takeIf { it.isNotBlank() }
+
+        private fun Properties.optionalDouble(key: String): Double? =
+            getProperty(key)?.takeIf { it.isNotBlank() }?.toDoubleOrNull()
 
         private fun Properties.requiredLong(key: String): Long =
             getProperty(key)?.toLongOrNull()

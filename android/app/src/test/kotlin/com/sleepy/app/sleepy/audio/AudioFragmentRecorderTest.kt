@@ -109,8 +109,8 @@ class AudioFragmentRecorderTest {
             (config.preRollSamples + config.sampleRate + config.postRollSamples).toLong()
 
         assertEquals(expectedSamples, fragment.samples)
-        assertEquals(17_000L, fragment.durationMs)
-        assertWavMatches(fragment, fromSample = 2 * 16_000L)
+        assertEquals(9_000L, fragment.durationMs)
+        assertWavMatches(fragment, fromSample = 6 * 16_000L)
     }
 
     @Test
@@ -160,7 +160,7 @@ class AudioFragmentRecorderTest {
         val wav = readWav(fragment.file)
 
         assertEquals(3L * 16_000, fragment.startSample)
-        assertEquals(12_000L, fragment.durationMs)
+        assertEquals(8_000L, fragment.durationMs)
         assertArrayEquals(fed.copyOfRange(0, wav.samples.size), wav.samples)
     }
 
@@ -184,8 +184,8 @@ class AudioFragmentRecorderTest {
         assertTrue(first.truncated)
         assertFalse(second.truncated)
         assertEquals(first.endSample, second.startSample)
-        assertEquals(68_000L, first.durationMs)
-        assertEquals(9_000L, second.durationMs)
+        assertEquals(64_000L, first.durationMs)
+        assertEquals(5_000L, second.durationMs)
 
         val firstWav = readWav(first.file)
         val secondWav = readWav(second.file)
@@ -276,12 +276,12 @@ class AudioFragmentRecorderTest {
         val fragment = fragments.single()
         val wav = readWav(fragment.file)
 
-        assertEquals(9_000L, fragment.durationMs)
+        assertEquals(5_000L, fragment.durationMs)
         assertEquals(wav.bytes.size - 44, wav.le32(40))
         assertEquals(wav.bytes.size - 8, wav.le32(4))
         assertFalse(recorder.isRecordingEvent)
         assertArrayEquals(
-            fed.copyOfRange(2 * 16_000, wav.samples.size + 2 * 16_000),
+            fed.copyOfRange(6 * 16_000, wav.samples.size + 6 * 16_000),
             wav.samples,
         )
     }
@@ -298,8 +298,8 @@ class AudioFragmentRecorderTest {
 
         val fragment = fragments.single()
 
-        assertEquals(12_000L, fragment.durationMs)
-        assertWavMatches(fragment, fromSample = 2 * 16_000L)
+        assertEquals(8_000L, fragment.durationMs)
+        assertWavMatches(fragment, fromSample = 6 * 16_000L)
     }
 
     @Test
@@ -319,12 +319,12 @@ class AudioFragmentRecorderTest {
         val second = fragments[1]
 
         assertEquals(9_000L, first.durationMs)
-        assertEquals(13_000L, second.durationMs)
-        assertEquals(2L * 16_000, first.contentStartSample)
-        assertEquals(11L * 16_000, first.contentEndSample)
+        assertEquals(5_000L, second.durationMs)
+        assertEquals(6L * 16_000, first.contentStartSample)
+        assertEquals(15L * 16_000, first.contentEndSample)
         assertEquals(first.contentEndSample, second.contentStartSample)
-        assertEquals(11L * 16_000, second.contentStartSample)
-        assertEquals(24L * 16_000, second.contentEndSample)
+        assertEquals(15L * 16_000, second.contentStartSample)
+        assertEquals(20L * 16_000, second.contentEndSample)
         assertEquals(11L * 16_000, first.endSample)
         assertEquals(15L * 16_000, second.startSample)
 
@@ -357,14 +357,14 @@ class AudioFragmentRecorderTest {
 
         assertEquals(9_000L, first.durationMs)
         assertEquals(6_000L, second.durationMs)
-        assertEquals(14_000L, third.durationMs)
+        assertEquals(6_000L, third.durationMs)
 
-        assertEquals(2L * 16_000, first.contentStartSample)
-        assertEquals(11L * 16_000, first.contentEndSample)
+        assertEquals(6L * 16_000, first.contentStartSample)
+        assertEquals(15L * 16_000, first.contentEndSample)
         assertEquals(first.contentEndSample, second.contentStartSample)
-        assertEquals(17L * 16_000, second.contentEndSample)
+        assertEquals(21L * 16_000, second.contentEndSample)
         assertEquals(second.contentEndSample, third.contentStartSample)
-        assertEquals(31L * 16_000, third.contentEndSample)
+        assertEquals(27L * 16_000, third.contentEndSample)
 
         fragments.forEach { assertWavMatches(it, it.contentStartSample) }
         assertNoSharedSamples()
@@ -374,8 +374,8 @@ class AudioFragmentRecorderTest {
     fun gapMatrixAroundMergeAndPreRoll() {
         assertGap(gapMillis = 1_990, expectedEvents = 1, expectedFragments = 1)
         assertGap(gapMillis = 2_010, expectedEvents = 2, expectedFragments = 2)
-        assertGap(gapMillis = 7_900, expectedEvents = 2, expectedFragments = 2)
-        assertGap(gapMillis = 8_100, expectedEvents = 2, expectedFragments = 2)
+        assertGap(gapMillis = 3_900, expectedEvents = 2, expectedFragments = 2)
+        assertGap(gapMillis = 4_100, expectedEvents = 2, expectedFragments = 2)
     }
 
     private fun assertGap(gapMillis: Int, expectedEvents: Int, expectedFragments: Int) {
@@ -428,11 +428,11 @@ class AudioFragmentRecorderTest {
 
         assertTrue(first.truncated)
         assertFalse(second.truncated)
-        assertEquals(68_000L, first.durationMs)
-        assertEquals(8_000L, second.durationMs)
+        assertEquals(64_000L, first.durationMs)
+        assertEquals(4_000L, second.durationMs)
         assertEquals(first.endSample, second.startSample)
         assertEquals(second.startSample, second.contentStartSample)
-        assertEquals(second.startSample + 8L * 16_000, second.contentEndSample)
+        assertEquals(second.startSample + 4L * 16_000, second.contentEndSample)
 
         fragments.forEach { fragment ->
             val validation = WavFileValidator.diagnose(fragment.file)
@@ -458,16 +458,16 @@ class AudioFragmentRecorderTest {
         assertTrue(fragments[0].truncated)
         assertTrue(fragments[1].truncated)
         assertFalse(fragments[2].truncated)
-        assertEquals(8_000L + 60_000L, fragments[0].durationMs)
+        assertEquals(4_000L + 60_000L, fragments[0].durationMs)
         assertEquals(60_000L, fragments[1].durationMs)
-        assertEquals(5_500L + 8_000L, fragments[2].durationMs)
+        assertEquals(5_500L + 4_000L, fragments[2].durationMs)
 
         fragments.zipWithNext().forEach { (first, second) ->
             assertEquals(first.endSample, second.startSample)
             assertEquals(first.contentEndSample, second.contentStartSample)
         }
         fragments.forEachIndexed { index, fragment ->
-            assertTrue("Файл $index длиннее лимита", fragment.durationMs <= 68_000L)
+            assertTrue("Файл $index длиннее лимита", fragment.durationMs <= 64_000L)
             assertEquals(
                 WavFileValidator.Status.VALID,
                 WavFileValidator.diagnose(fragment.file).status,
@@ -537,12 +537,12 @@ class AudioFragmentRecorderTest {
         val first = fragments[0]
         val second = fragments[1]
 
-        assertEquals(2L * 16_000, first.contentStartSample)
+        assertEquals(6L * 16_000, first.contentStartSample)
         assertEquals(first.contentEndSample, second.contentStartSample)
         assertEquals(first.endSample, second.startSample)
         assertEquals(second.startSample, second.contentStartSample)
-        assertEquals(1_088_000L, first.samples)
-        assertEquals(144_000L, second.samples)
+        assertEquals(1_024_000L, first.samples)
+        assertEquals(80_000L, second.samples)
 
         assertWavMatches(first, first.contentStartSample)
         assertWavMatches(second, second.contentStartSample)
@@ -565,9 +565,9 @@ class AudioFragmentRecorderTest {
         val fragment = fragments.single()
 
         assertEquals(35L * 16_000, fragment.startSample)
-        assertEquals(27L * 16_000, fragment.contentStartSample)
-        assertEquals(17_000L, fragment.durationMs)
-        assertEquals(44L * 16_000, fragment.contentEndSample)
+        assertEquals(31L * 16_000, fragment.contentStartSample)
+        assertEquals(9_000L, fragment.durationMs)
+        assertEquals(40L * 16_000, fragment.contentEndSample)
         assertWavMatches(fragment, fragment.contentStartSample)
         assertTrue(
             "Кольцевой буфер должен успеть перезаписаться",
@@ -588,7 +588,7 @@ class AudioFragmentRecorderTest {
         val wav = readWav(fragment.file)
         val from = (fragment.startSample - RecordingConfig.DEFAULT.preRollSamples).toInt()
 
-        assertEquals(17_000L, fragment.durationMs)
+        assertEquals(9_000L, fragment.durationMs)
         assertEquals(1, recorder.savedFragments)
         assertArrayEquals(fed.copyOfRange(from, from + wav.samples.size), wav.samples)
     }

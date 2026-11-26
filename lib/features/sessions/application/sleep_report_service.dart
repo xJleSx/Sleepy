@@ -5,9 +5,7 @@ import '../domain/sleep_session.dart';
 import 'sleep_score_service.dart';
 
 class SleepReportService {
-  const SleepReportService({
-    this.scoreService = const SleepScoreService(),
-  });
+  const SleepReportService({this.scoreService = const SleepScoreService()});
 
   final SleepScoreService scoreService;
 
@@ -15,9 +13,7 @@ class SleepReportService {
     required SleepSession session,
     required List<SleepSession> allSessions,
   }) {
-    final others = allSessions
-        .where((item) => item.id != session.id)
-        .toList()
+    final others = allSessions.where((item) => item.id != session.id).toList()
       ..sort((left, right) => left.endedAt.compareTo(right.endedAt));
 
     final previous = others
@@ -74,15 +70,27 @@ class SleepReportService {
     var cursor = start;
     while (cursor.isBefore(end) && buckets.length < 16) {
       final next = cursor.add(const Duration(hours: 1));
-      final count = session.events
+      final events = session.events
           .where(
             (event) =>
                 !event.startedAt.isBefore(cursor) &&
                 event.startedAt.isBefore(next),
           )
-          .length;
+          .toList();
+      final levels = events
+          .map((event) => event.averageDbfs)
+          .whereType<double>()
+          .toList();
+      final averageDbfs = levels.isEmpty
+          ? null
+          : levels.reduce((sum, value) => sum + value) / levels.length;
       buckets.add(
-        SleepEventBucket(start: cursor, end: next, count: count),
+        SleepEventBucket(
+          start: cursor,
+          end: next,
+          count: events.length,
+          averageDbfs: averageDbfs,
+        ),
       );
       cursor = next;
     }
@@ -127,9 +135,7 @@ class SleepReportService {
 
     final regularity = score.regularity;
     if (!regularity.isAvailable) {
-      result.add(
-        'Для оценки регулярности нужно минимум 3 завершённые ночи.',
-      );
+      result.add('Для оценки регулярности нужно минимум 3 завершённые ночи.');
     }
 
     if (session.eventCount > 0) {
@@ -138,9 +144,7 @@ class SleepReportService {
         'Это не доказательство храпа или апноэ.',
       );
     } else {
-      result.add(
-        'За ночь не обнаружено звуковых событий, прошедших детектор.',
-      );
+      result.add('За ночь не обнаружено звуковых событий, прошедших детектор.');
     }
 
     if (previous != null) {

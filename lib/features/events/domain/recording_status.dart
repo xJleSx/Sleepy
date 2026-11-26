@@ -27,6 +27,12 @@ class RecordingStatus {
     this.writerSavedCount,
     this.writerFailedCount,
     this.lastWriterError = '',
+    this.recordingProfile = 'STANDARD',
+    this.diagnosticProfile = 'STANDARD',
+    this.weakCandidateCount,
+    this.weakSavedCount,
+    this.weakRejectedCount,
+    this.lastWeakRejection = '',
   });
 
   static const empty = RecordingStatus(
@@ -68,6 +74,12 @@ class RecordingStatus {
   final int? writerSavedCount;
   final int? writerFailedCount;
   final String lastWriterError;
+  final String recordingProfile;
+  final String diagnosticProfile;
+  final int? weakCandidateCount;
+  final int? weakSavedCount;
+  final int? weakRejectedCount;
+  final String lastWeakRejection;
 
   bool get hasError => error.isNotEmpty;
   bool get hasWarning => lastWarning.isNotEmpty;
@@ -99,6 +111,12 @@ class RecordingStatus {
       writerSavedCount: _count(map['writerSavedCount']),
       writerFailedCount: _count(map['writerFailedCount']),
       lastWriterError: _text(map['lastWriterError']),
+      recordingProfile: _profileId(map['recordingProfile']),
+      diagnosticProfile: _profileId(map['diagnosticProfile']),
+      weakCandidateCount: _count(map['weakCandidateCount']),
+      weakSavedCount: _count(map['weakSavedCount']),
+      weakRejectedCount: _count(map['weakRejectedCount']),
+      lastWeakRejection: _text(map['lastWeakRejection']),
     );
   }
 
@@ -107,6 +125,15 @@ class RecordingStatus {
   static double? _dbfs(Object? value) => value is num ? value.toDouble() : null;
 
   static String _text(Object? value) => value is String ? value : '';
+
+  static String _profileId(Object? value) {
+    return switch (value) {
+      'HIGH' => 'HIGH',
+      'VERY_HIGH' => 'VERY_HIGH',
+      'STANDARD' => 'STANDARD',
+      _ => 'STANDARD',
+    };
+  }
 
   static DateTime? _time(Object? value) {
     if (value is! num) return null;
